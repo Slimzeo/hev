@@ -1,0 +1,552 @@
+<!doctype html>
+<!--
+  Source-derived Rattler model for runtime environment isolation when package
+  installation and dependency management are explicitly out of scope.
+
+  Approved visual direction: one concise technical HTML, white background,
+  thin connectors, rectangular nodes, no variants or image export.
+-->
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Rattler：去掉 Installer 后的运行时环境隔离模型</title>
+  <style>
+    :root {
+      --ink: #20242b;
+      --muted: #667085;
+      --line: #98a2b3;
+      --line-light: #d0d5dd;
+      --paper: #fff;
+      --panel: #f8fafc;
+      --blue: #4f7cff;
+      --blue-soft: #eef3ff;
+      --amber: #a15c16;
+      --amber-soft: #fff8eb;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: var(--paper);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI",
+        "PingFang SC", "Microsoft YaHei", sans-serif;
+      line-height: 1.55;
+    }
+
+    main {
+      width: min(1460px, calc(100% - 48px));
+      margin: 0 auto;
+      padding: 40px 0 54px;
+    }
+
+    header {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 40px;
+      padding-bottom: 22px;
+      border-bottom: 1px solid var(--line-light);
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: 29px;
+      line-height: 1.25;
+      font-weight: 650;
+      letter-spacing: -.02em;
+    }
+
+    header p {
+      max-width: 950px;
+      margin: 0;
+      color: var(--muted);
+      font-size: 15px;
+    }
+
+    .verdict {
+      flex: 0 0 355px;
+      padding: 9px 0 9px 18px;
+      border-left: 2px solid var(--blue);
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .verdict strong {
+      display: block;
+      margin-bottom: 3px;
+      color: var(--ink);
+      font-weight: 650;
+    }
+
+    .scope {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      margin: 20px 0 12px;
+      border: 1px solid var(--line-light);
+    }
+
+    .scope div {
+      padding: 10px 12px;
+      border-right: 1px solid var(--line-light);
+      color: var(--muted);
+      font-size: 12px;
+      text-align: center;
+    }
+
+    .scope div:last-child { border-right: 0; }
+    .scope b { display: block; color: var(--ink); font-weight: 650; }
+    .scope .removed { color: #8a8f98; text-decoration: line-through; }
+
+    .diagram-wrap {
+      overflow-x: auto;
+      border: 1px solid var(--line-light);
+      background: #fff;
+    }
+
+    .diagram {
+      position: relative;
+      width: 1400px;
+      height: 760px;
+      margin: 0 auto;
+    }
+
+    .aggregate {
+      position: absolute;
+      top: 36px;
+      height: 670px;
+      border: 1px solid var(--line-light);
+      background: #fff;
+      z-index: 1;
+    }
+
+    .external { left: 30px; width: 385px; }
+    .runtime { left: 455px; width: 520px; }
+    .process { left: 1015px; width: 355px; }
+
+    .aggregate-title {
+      position: absolute;
+      left: 18px;
+      right: 18px;
+      top: 15px;
+      padding-bottom: 11px;
+      border-bottom: 1px solid var(--line-light);
+    }
+
+    .aggregate-title b {
+      display: block;
+      font-size: 16px;
+      font-weight: 650;
+    }
+
+    .aggregate-title span {
+      display: block;
+      margin-top: 3px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .node {
+      position: absolute;
+      z-index: 3;
+      padding: 13px 15px;
+      border: 1.5px solid var(--line);
+      border-radius: 5px;
+      background: var(--panel);
+    }
+
+    .node.core {
+      border: 2px solid var(--blue);
+      background: var(--blue-soft);
+    }
+
+    .node.external-node {
+      border-style: dashed;
+      border-color: var(--amber);
+      background: var(--amber-soft);
+    }
+
+    .node h2, .node h3 {
+      margin: 0;
+      font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+      font-weight: 650;
+      line-height: 1.27;
+      letter-spacing: -.02em;
+    }
+
+    .node h2 { font-size: 18px; }
+    .node h3 { font-size: 14px; }
+
+    .node p {
+      margin: 6px 0 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .node code {
+      color: var(--ink);
+      font: 600 11px/1.4 ui-monospace, "SFMono-Regular", Menlo, monospace;
+    }
+
+    .role {
+      display: block;
+      margin-bottom: 7px;
+      color: var(--muted);
+      font-size: 10px;
+      line-height: 1;
+    }
+
+    .prefix { left: 56px; top: 126px; width: 330px; min-height: 116px; }
+    .python { left: 56px; top: 288px; width: 154px; min-height: 122px; }
+    .packages { left: 232px; top: 288px; width: 154px; min-height: 122px; }
+    .pip { left: 56px; top: 468px; width: 330px; min-height: 102px; }
+    .external-note { left: 56px; top: 616px; width: 330px; min-height: 63px; }
+
+    .prefix-input { left: 480px; top: 126px; width: 205px; min-height: 92px; }
+    .activation-input { left: 724px; top: 126px; width: 225px; min-height: 92px; }
+    .activator { left: 480px; top: 275px; width: 205px; min-height: 116px; }
+    .sources { left: 724px; top: 275px; width: 225px; min-height: 116px; }
+    .activation-result { left: 596px; top: 448px; width: 238px; min-height: 106px; }
+    .modes { left: 480px; top: 608px; width: 469px; min-height: 70px; }
+
+    .child { left: 1042px; top: 126px; width: 300px; min-height: 105px; }
+    .path-lookup { left: 1042px; top: 286px; width: 300px; min-height: 102px; }
+    .selected-runtime { left: 1042px; top: 444px; width: 300px; min-height: 106px; }
+    .import { left: 1042px; top: 608px; width: 300px; min-height: 70px; }
+
+    .parts {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 7px;
+      margin-top: 11px;
+    }
+
+    .part {
+      padding: 7px 8px;
+      border: 1px solid var(--line-light);
+      background: #fff;
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .part strong {
+      display: block;
+      color: var(--ink);
+      font: 600 11px/1.35 ui-monospace, "SFMono-Regular", Menlo, monospace;
+    }
+
+    .mode-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-top: 8px;
+    }
+
+    .mode-grid div {
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .mode-grid strong { color: var(--ink); font-weight: 650; }
+
+    .edge-label {
+      position: absolute;
+      z-index: 5;
+      padding: 2px 5px;
+      color: var(--muted);
+      background: #fff;
+      font-size: 11px;
+      line-height: 1.25;
+      white-space: nowrap;
+    }
+
+    .external .edge-label { background: #fff; }
+
+    .l-python { left: 94px; top: 260px; }
+    .l-site { left: 277px; top: 260px; }
+    .l-pip { left: 177px; top: 432px; }
+    .l-prefix { left: 418px; top: 157px; }
+    .l-current { left: 696px; top: 157px; }
+    .l-build { left: 583px; top: 246px; }
+    .l-read { left: 704px; top: 407px; }
+    .l-activate { left: 678px; top: 414px; }
+    .l-child { left: 975px; top: 482px; }
+    .l-path { left: 1144px; top: 254px; }
+    .l-select { left: 1137px; top: 410px; }
+    .l-import { left: 1110px; top: 576px; }
+
+    svg {
+      position: absolute;
+      inset: 0;
+      z-index: 2;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+    }
+
+    .edge {
+      fill: none;
+      stroke: var(--line);
+      stroke-width: 1.7;
+      marker-end: url(#arrow);
+    }
+
+    .edge.external-edge {
+      stroke: var(--amber);
+      stroke-dasharray: 7 6;
+      marker-end: url(#arrow-amber);
+    }
+
+    .boundary-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      margin-top: 22px;
+      border: 1px solid var(--line-light);
+    }
+
+    .boundary {
+      min-height: 132px;
+      padding: 16px 18px;
+      border-right: 1px solid var(--line-light);
+    }
+
+    .boundary:last-child { border-right: 0; }
+    .boundary b { display: block; margin-bottom: 6px; font-size: 14px; }
+    .boundary p { margin: 0; color: var(--muted); font-size: 12px; }
+
+    .source-note {
+      margin-top: 20px;
+      padding: 17px 20px;
+      border-top: 1px solid var(--line-light);
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .source-note strong { color: var(--ink); font-weight: 650; }
+    .source-note code { font: 12px/1.75 ui-monospace, "SFMono-Regular", Menlo, monospace; }
+
+    @media (max-width: 760px) {
+      main { width: calc(100% - 24px); padding-top: 24px; }
+      header { display: block; }
+      .verdict { margin-top: 16px; }
+      .scope, .boundary-grid { grid-template-columns: 1fr; }
+      .scope div, .boundary { border-right: 0; border-bottom: 1px solid var(--line-light); }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1>去掉 Installer 后：Rattler 的运行时环境隔离模型</h1>
+        <p>用户或外部工具负责创建可用 Prefix，并在其中自行执行 pip。Rattler 不维护包的 desired state，只负责把指定 Prefix 转换为当前 Shell 或子进程的运行上下文。</p>
+      </div>
+      <div class="verdict">
+        <strong>最小模型</strong>
+        <code>existing prefix: &amp;Path → Activator → activated env → child process</code>。隔离来自不同 Prefix 中的 Python runtime 与 site-packages。
+      </div>
+    </header>
+
+    <section class="scope" aria-label="模型范围">
+      <div><b class="removed">EnvironmentYaml</b>无声明状态</div>
+      <div><b class="removed">Solver</b>依赖选择交给 pip</div>
+      <div><b class="removed">Transaction</b>不做环境收敛</div>
+      <div><b class="removed">Installer</b>不安装包</div>
+      <div><b>Activator / Run</b>只管理运行上下文</div>
+    </section>
+
+    <section class="diagram-wrap" aria-label="运行时环境隔离领域模型">
+      <div class="diagram">
+        <div class="aggregate external">
+          <div class="aggregate-title">
+            <b>外部所有权 · Existing Environment</b>
+            <span>环境内容由用户、Python 与 pip 直接修改</span>
+          </div>
+        </div>
+
+        <div class="aggregate runtime">
+          <div class="aggregate-title">
+            <b>Rattler 运行时控制面</b>
+            <span>读取 Prefix 并构造激活后的进程环境</span>
+          </div>
+        </div>
+
+        <div class="aggregate process">
+          <div class="aggregate-title">
+            <b>选中环境中的进程</b>
+            <span>命令解析与 Python import 落在同一 Prefix</span>
+          </div>
+        </div>
+
+        <article class="node core prefix">
+          <span class="role">已有可用环境根目录</span>
+          <h2>prefix: PathBuf</h2>
+          <div class="parts">
+            <div class="part"><strong>bin/</strong>python · pip · scripts</div>
+            <div class="part"><strong>site-packages/</strong>pip 安装结果</div>
+            <div class="part"><strong>conda-meta/</strong>可选 Conda 状态</div>
+          </div>
+        </article>
+
+        <article class="node python">
+          <span class="role">运行时身份</span>
+          <h3>prefix/bin/python</h3>
+          <p>解释器决定自己的 <code>sys.prefix / sys.path</code>。</p>
+        </article>
+
+        <article class="node packages">
+          <span class="role">环境内依赖状态</span>
+          <h3>site-packages</h3>
+          <p>当前有什么就是有什么；没有 desired 对账。</p>
+        </article>
+
+        <article class="node external-node pip">
+          <span class="role">用户直接执行</span>
+          <h3>python -m pip install / uninstall</h3>
+          <p>索引、版本选择、下载、冲突和写入都由 pip 负责。</p>
+        </article>
+
+        <article class="node external-note">
+          <span class="role">重要边界</span>
+          <h3>PrefixData 只看 conda-meta；不盘点 pip dist-info</h3>
+        </article>
+
+        <article class="node core prefix-input">
+          <span class="role">环境选择</span>
+          <h3>prefix: &amp;Path</h3>
+          <p>路径就是 Rattler 运行时使用的环境身份。</p>
+        </article>
+
+        <article class="node activation-input">
+          <span class="role">宿主进程现状</span>
+          <h3>ActivationVariables</h3>
+          <p>当前 PATH、CONDA_PREFIX、CONDA_SHLVL 与完整环境变量。</p>
+        </article>
+
+        <article class="node core activator">
+          <span class="role">Rattler 核心模型</span>
+          <h3>Activator::from_path</h3>
+          <p>从 Prefix 收集路径、脚本与环境变量。</p>
+        </article>
+
+        <article class="node sources">
+          <span class="role">Activator 的输入来源</span>
+          <h3>Prefix runtime metadata</h3>
+          <p><code>prefix_path_entries</code><br><code>conda-meta/state</code><br><code>activate.d / deactivate.d</code></p>
+        </article>
+
+        <article class="node core activation-result">
+          <span class="role">激活计算结果</span>
+          <h3>ActivationResult / activated_env</h3>
+          <p>新 PATH、CONDA_PREFIX、SHLVL、变量备份与激活脚本效果。</p>
+        </article>
+
+        <article class="node modes">
+          <span class="role">两种消费方式</span>
+          <div class="mode-grid">
+            <div><strong>shell_hook</strong><br>打印脚本，修改当前 Shell。</div>
+            <div><strong>run_command_in_environment</strong><br>把 activated_env 注入子进程。</div>
+          </div>
+        </article>
+
+        <article class="node core child">
+          <span class="role">执行目标</span>
+          <h2>child process</h2>
+          <p>继承由目标 Prefix 生成的 PATH 和环境变量。</p>
+        </article>
+
+        <article class="node path-lookup">
+          <span class="role">命令解析</span>
+          <h3>PATH lookup</h3>
+          <p><code>prefix/bin</code> 被放在 PATH 前部，命中该环境的 python / pip。</p>
+        </article>
+
+        <article class="node core selected-runtime">
+          <span class="role">最终选择结果</span>
+          <h3>selected Python runtime</h3>
+          <p>进程运行于一个 Prefix；其他 Prefix 不进入本次 PATH / sys.path。</p>
+        </article>
+
+        <article class="node import">
+          <span class="role">Python 自身行为</span>
+          <h3>import → this prefix/site-packages</h3>
+        </article>
+
+        <svg viewBox="0 0 1400 760" aria-hidden="true">
+          <defs>
+            <marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+              <path d="M0,0 L8,4 L0,8 Z" fill="#98a2b3"></path>
+            </marker>
+            <marker id="arrow-amber" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+              <path d="M0,0 L8,4 L0,8 Z" fill="#a15c16"></path>
+            </marker>
+          </defs>
+
+          <path class="edge" d="M133 242 V288"></path>
+          <path class="edge" d="M309 242 V288"></path>
+          <path class="edge external-edge" d="M221 468 V432 H309 V410"></path>
+
+          <path class="edge" d="M386 184 H480"></path>
+          <path class="edge" d="M583 218 V275"></path>
+          <path class="edge" d="M836 218 V275"></path>
+          <path class="edge" d="M685 333 H724"></path>
+          <path class="edge" d="M715 391 V448"></path>
+          <path class="edge" d="M715 554 V608"></path>
+
+          <path class="edge" d="M949 643 H990 V178 H1042"></path>
+          <path class="edge" d="M1192 231 V286"></path>
+          <path class="edge" d="M1192 388 V444"></path>
+          <path class="edge" d="M1192 550 V608"></path>
+        </svg>
+
+        <span class="edge-label l-python">contains</span>
+        <span class="edge-label l-site">contains</span>
+        <span class="edge-label l-pip">直接修改</span>
+        <span class="edge-label l-prefix">选择环境</span>
+        <span class="edge-label l-current">宿主上下文</span>
+        <span class="edge-label l-build">构造</span>
+        <span class="edge-label l-read">读取 metadata</span>
+        <span class="edge-label l-activate">计算 env diff</span>
+        <span class="edge-label l-child">注入并启动</span>
+        <span class="edge-label l-path">PATH 优先级</span>
+        <span class="edge-label l-select">选择解释器</span>
+        <span class="edge-label l-import">sys.path</span>
+      </div>
+    </section>
+
+    <section class="boundary-grid" aria-label="责任与冲突边界">
+      <article class="boundary">
+        <b>为什么传统工具复杂</b>
+        <p>它们同时承诺求解、二进制平台兼容、原子升级、回滚、可复现和非 Python 库管理。复杂度来自包生命周期，不来自 Prefix 隔离。</p>
+      </article>
+      <article class="boundary">
+        <b>官方源可靠仍不等于简单</b>
+        <p>源只保证内容可获取；它不替客户端决定兼容组合、目标平台、升级边界和失败恢复。你的模型把这些职责明确交给 pip。</p>
+      </article>
+      <article class="boundary">
+        <b>冲突归属</b>
+        <p>跨 Prefix 的版本天然分离；同一 Prefix 内依赖冲突归 pip。Rattler 侧只需正确切换 PATH、CONDA_PREFIX 与激活栈。</p>
+      </article>
+      <article class="boundary">
+        <b>可选观测的限制</b>
+        <p><code>PrefixData</code> 只扫描 <code>conda-meta/*.json</code>，不能完整反映 pip distributions。且 Activator 使用 Conda 的 <code>CONDA_PREFIX</code>；标准 venv 的 <code>VIRTUAL_ENV</code> 需另行适配。</p>
+      </article>
+    </section>
+
+    <div class="source-note">
+      <strong>源码锚点：</strong><br>
+      <code>crates/rattler_shell/src/activation.rs:81</code> · Activator 持有 target_prefix、paths、脚本与 env vars<br>
+      <code>crates/rattler_shell/src/activation.rs:303</code> · Prefix 对应的 PATH entries<br>
+      <code>crates/rattler_shell/src/activation.rs:367</code> · Activator::from_path(&amp;Path, shell, platform)<br>
+      <code>crates/rattler_shell/src/activation.rs:462</code> · 生成 PATH / CONDA_PREFIX / CONDA_SHLVL 与变量备份<br>
+      <code>crates/rattler_shell/src/run/mod.rs:30</code> · run_command_in_environment 启动带 activated_env 的子进程<br>
+      <code>crates/rattler_conda_types/src/prefix_data.rs:29</code> · PrefixData 仅为 conda-meta 的惰性视图<br>
+      <code>边界：</code>Rattler Activator 是 Conda 激活语义；执行 Prefix 内 Python 可以获得其 sys.path 隔离，但标准 venv 的 VIRTUAL_ENV 不在该实现中。<br>
+      <code>范围：</code>没有 EnvironmentYaml、desired、Solver、Transaction、Installer 或 PackageCache。
+    </div>
+  </main>
+</body>
+</html>

@@ -16,3 +16,19 @@
 - 包内 `PathsJson` 是安装指令；PrefixRecord 内 `PrefixPaths` 是安装结果。
 - `ClobberRegistry` 内部使用 `PathResolver` 路径 trie 处理多个包占用相同路径的冲突。
 - 本图把 Solver 与 Installer 画为执行服务，把 SolverResult、Transaction、ClobberedPath 画为派生模型，避免将行为组件和持久领域实体混为一类。
+- 当前 checkout 的 `EnvironmentYaml` 仅实现字段建模、YAML 读写、`match_specs()`、subsection 与 `pip_specs()` 查询；仓库内除定义和测试外没有生产调用把它连接到 Solver 或 Installer。
+- 当前 `rattler` CLI 的 `create` 命令从命令行参数读取 specs、channels 与 target prefix，不接收 environment.yaml 文件。
+- 当前真实的无求解 CLI 路径是 `InjectIntoPrefix / RemoveFromPrefix`：调用方以本地归档或已安装包名给出精确变化，命令直接组装 desired `RepoDataRecord` 集合并调用 `Installer::install`。
+- `Installer::install` 的公共输入是 target prefix 与 `RepoDataRecord` 集合；它内部读取现状、构造 Transaction 并执行变更，因此 Solver 不属于安装器的强制前置。
+- `EnvironmentYaml.variables` 的注释要求调用方将其写入 `conda-meta/state`，而 `rattler_shell` 会在激活时读取该 state；当前仓库没有从 EnvironmentYaml 自动写 state 的连接代码。
+- `EnvironmentYaml.pip_specs()` 只返回 pip subsection 字符串列表；当前仓库没有由该方法自动执行 pip 的调用链。
+- `ExplicitEnvironmentSpec` 表达已经按安装顺序列出的精确 package URL；源码明确说明这种格式不需要 Solver 或 repodata，但当前 checkout 没有将该解析类型接成完整的 CLI apply/install 命令。
+- `EnvironmentYaml` 是声明意图模型而不是环境隔离本身：name/prefix 是位置偏好，channels 与 Conda MatchSpec 是求解约束，pip 是外部包管理器 subsection，variables 是期望激活变量。
+- `EnvironmentYaml.dependencies` 中的 MatchSpec 不是精确 desired package state；只有查询 repodata 并求解后得到的 `RepoDataRecord[]` 才是 `Installer::install` 接受的完整目标状态。
+- 物化环境由 Prefix 路径、Prefix 内包文件、`conda-meta` 下的 PrefixRecord 与 state 共同表达；环境声明文件的格式可以是 YAML，也可以是其它 manifest，YAML 本身不提供隔离。
+- 去掉包安装职责后，Rattler 的最小运行时输入是现成环境路径：`Activator::from_path` 与 `run_command_in_environment` 都直接接受 `&Path`，不要求 Solver、Installer 或 EnvironmentYaml。
+- `Activator::from_path` 从 Prefix 收集平台相关 PATH entries、activate/deactivate scripts、`conda-meta/state` 和 `etc/conda/env_vars.d`。
+- 激活过程移除旧 Prefix 路径、前置新 Prefix 路径、设置 `CONDA_PREFIX / CONDA_SHLVL` 并备份嵌套激活状态。
+- `run_command_in_environment` 将 `run_activation` 得到的环境变量注入 child process；命令解析因此优先命中目标 Prefix 的可执行文件。
+- 用户通过 pip 写入的 distribution 状态通常位于 Python site-packages；`PrefixData` 只扫描 `conda-meta/*.json`，因此不能作为 pip 包状态账本。
+- Rattler `Activator` 实现的是 Conda 激活语义：设置 `CONDA_PREFIX / CONDA_SHLVL`，未设置标准 Python venv 的 `VIRTUAL_ENV`；若产品创建标准 venv，需要单独适配该变量与其激活约定。
