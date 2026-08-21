@@ -1,0 +1,1507 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=1920, initial-scale=1" />
+  <title>Rattler 包身份血缘 · 方向 B</title>
+  <!--
+    ASSUMPTIONS
+    1. 本文件为待选择的“方向 B”初稿，用于展示包身份血缘这一布局逻辑；不代表用户已经选定该方向。
+    2. 本图描述领域模型关系，不等同于函数调用时序；横向位置表达“同一包身份逐步获得更多上下文”，箭头只在存在明确关系动词时使用。
+    3. MatchSpec 是求解意图，不是 PackageRecord 的结构父类；两者之间通过 SolverTask / SolverResult 建立选择关系。
+    4. Cache 位于物理来源轨，而 RepoDataRecord → PrefixRecord 的 1:1 组合位于结构血缘轨；两条轨道刻意分开，避免把缓存误读为内嵌字段。
+    5. Prefix 路径承担环境边界，PrefixData + PrefixRecord 表达已安装状态；不存在另画一个厚重 Environment 实体的需要。
+
+    REASONING
+    - 主视觉采用“包身份护照带”：意图、包身份、仓库定位、共享缓存、安装事实、环境视图六站连续展开。
+    - 上方求解面解释 desired 从何而来；下方变更与路径证据面解释 current + desired 如何变成安装结果。
+    - 持久模型、值对象、派生模型、执行服务采用稳定的四类标签；所有关键连线均写明关系动词与基数。
+    - Rattler README 的黄黑图作为右上角小型来源标识；整体不使用外部字体、脚本或网络资源。
+  -->
+  <style>
+    :root {
+      --ink: #171713;
+      --ink-2: #34342f;
+      --paper: #f4f0e3;
+      --paper-2: #fffdf6;
+      --yellow: #ffc800;
+      --yellow-soft: #ffe98a;
+      --rust: #b6532f;
+      --sage: #6f7e64;
+      --line: #a9a493;
+      --muted: #68665d;
+      --white: #fffdf6;
+    }
+
+    * { box-sizing: border-box; }
+
+    html,
+    body {
+      width: 1920px;
+      height: 1200px;
+      margin: 0;
+      overflow: hidden;
+      background: var(--paper);
+    }
+
+    body {
+      color: var(--ink);
+      font-family: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    code,
+    .rust,
+    .formula,
+    .cardinality {
+      font-family: "SFMono-Regular", "Cascadia Code", "Roboto Mono", Menlo, Consolas, monospace;
+    }
+
+    #canvas {
+      position: relative;
+      width: 1920px;
+      height: 1200px;
+      overflow: hidden;
+      background-color: var(--paper);
+      background-image:
+        linear-gradient(rgba(23, 23, 19, .038) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(23, 23, 19, .038) 1px, transparent 1px);
+      background-size: 24px 24px;
+    }
+
+    #canvas::before {
+      content: "";
+      position: absolute;
+      inset: 0 0 auto 0;
+      height: 13px;
+      background: var(--yellow);
+      border-bottom: 3px solid var(--ink);
+      z-index: 20;
+    }
+
+    .masthead {
+      position: absolute;
+      left: 44px;
+      right: 44px;
+      top: 29px;
+      height: 103px;
+      display: flex;
+      align-items: flex-start;
+      border-bottom: 2px solid var(--ink);
+      z-index: 10;
+    }
+
+    .title-block { width: 900px; }
+
+    .eyebrow {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 5px;
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: .18em;
+      text-transform: uppercase;
+    }
+
+    .eyebrow .mark {
+      width: 29px;
+      height: 11px;
+      background: var(--yellow);
+      border: 1.5px solid var(--ink);
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 44px;
+      line-height: 1.02;
+      font-weight: 900;
+      letter-spacing: -.045em;
+    }
+
+    h1 .rust {
+      font-size: .9em;
+      letter-spacing: -.06em;
+    }
+
+    .subtitle {
+      margin-top: 7px;
+      font-size: 17px;
+      font-weight: 650;
+      color: var(--ink-2);
+      letter-spacing: .01em;
+    }
+
+    .legend {
+      position: absolute;
+      right: 273px;
+      top: 5px;
+      width: 605px;
+      display: grid;
+      grid-template-columns: repeat(4, max-content);
+      justify-content: end;
+      gap: 8px;
+    }
+
+    .legend-title {
+      grid-column: 1 / -1;
+      text-align: right;
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: .15em;
+      color: var(--muted);
+    }
+
+    .legend-chip,
+    .type-chip {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 22px;
+      padding: 3px 8px 2px;
+      border: 1.5px solid var(--ink);
+      font-size: 11px;
+      line-height: 1;
+      font-weight: 800;
+      letter-spacing: .06em;
+      white-space: nowrap;
+    }
+
+    .legend-chip.persistent,
+    .type-chip.persistent { background: var(--ink); color: var(--white); }
+    .legend-chip.value,
+    .type-chip.value { background: var(--yellow); color: var(--ink); }
+    .legend-chip.derived,
+    .type-chip.derived {
+      background: repeating-linear-gradient(135deg, var(--paper-2), var(--paper-2) 5px, #ddd7c6 5px, #ddd7c6 7px);
+    }
+    .legend-chip.service,
+    .type-chip.service { background: var(--paper-2); border-style: dashed; }
+
+    .source-stamp {
+      position: absolute;
+      right: 0;
+      top: 0;
+      width: 245px;
+      height: 82px;
+      padding: 7px;
+      background: var(--yellow);
+      border: 2px solid var(--ink);
+      box-shadow: 4px 4px 0 var(--ink);
+    }
+
+    .source-stamp img {
+      display: block;
+      width: 100%;
+      height: 54px;
+      object-fit: cover;
+      object-position: center;
+      filter: saturate(.9) contrast(1.03);
+    }
+
+    .source-stamp span {
+      display: block;
+      padding-top: 3px;
+      font-size: 9px;
+      font-weight: 900;
+      letter-spacing: .09em;
+      text-transform: uppercase;
+    }
+
+    .section-kicker {
+      position: absolute;
+      z-index: 8;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      height: 22px;
+      font-size: 12px;
+      font-weight: 900;
+      letter-spacing: .13em;
+      text-transform: uppercase;
+    }
+
+    .section-kicker .index {
+      display: grid;
+      place-items: center;
+      width: 31px;
+      height: 21px;
+      color: var(--paper-2);
+      background: var(--ink);
+      font-family: "SFMono-Regular", Menlo, monospace;
+      letter-spacing: 0;
+    }
+
+    .solver-kicker { left: 45px; top: 143px; }
+    .lineage-kicker { left: 45px; top: 310px; }
+    .execution-kicker { left: 45px; top: 670px; }
+
+    .panel,
+    .model-card {
+      position: absolute;
+      background: rgba(255, 253, 246, .95);
+      border: 2px solid var(--ink);
+      box-shadow: 5px 5px 0 rgba(23, 23, 19, .16);
+      z-index: 5;
+    }
+
+    .model-card {
+      padding: 16px 16px 14px;
+    }
+
+    .model-card::before {
+      content: attr(data-stage);
+      position: absolute;
+      right: 10px;
+      top: 7px;
+      color: rgba(23, 23, 19, .12);
+      font-family: "SFMono-Regular", Menlo, monospace;
+      font-size: 42px;
+      font-weight: 900;
+      letter-spacing: -.08em;
+      pointer-events: none;
+    }
+
+    .model-card.hero {
+      background: var(--yellow);
+      box-shadow: 7px 7px 0 var(--ink);
+      border-width: 3px;
+      z-index: 7;
+    }
+
+    .model-card.cache-card {
+      background: var(--ink);
+      color: var(--paper-2);
+      border-color: var(--ink);
+      box-shadow: 7px 7px 0 var(--yellow);
+    }
+
+    .model-card.cache-card::before { color: rgba(255, 255, 255, .11); }
+
+    .card-top {
+      position: relative;
+      z-index: 2;
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      min-height: 22px;
+      margin-bottom: 10px;
+    }
+
+    .card-top .micro {
+      font-size: 10px;
+      font-weight: 850;
+      letter-spacing: .08em;
+      color: var(--muted);
+      text-transform: uppercase;
+    }
+
+    .cache-card .card-top .micro { color: #bcb8a9; }
+
+    .model-card h2,
+    .panel h2,
+    .nested-card h3 {
+      margin: 0;
+      font-family: "SFMono-Regular", "Cascadia Code", Menlo, Consolas, monospace;
+      letter-spacing: -.045em;
+    }
+
+    .model-card h2 {
+      position: relative;
+      z-index: 2;
+      font-size: 23px;
+      line-height: 1.05;
+      word-break: break-word;
+    }
+
+    .model-card .role {
+      position: relative;
+      z-index: 2;
+      margin: 7px 0 10px;
+      min-height: 38px;
+      font-size: 15px;
+      line-height: 1.36;
+      font-weight: 720;
+    }
+
+    .field-list {
+      position: relative;
+      z-index: 2;
+      margin: 0;
+      padding: 8px 0 0;
+      border-top: 1px solid rgba(23, 23, 19, .35);
+      list-style: none;
+      font-size: 13px;
+      line-height: 1.54;
+    }
+
+    .cache-card .field-list { border-top-color: rgba(255, 255, 255, .32); }
+
+    .field-list li {
+      position: relative;
+      padding-left: 11px;
+    }
+
+    .field-list li::before {
+      content: "·";
+      position: absolute;
+      left: 0;
+      font-weight: 900;
+      color: var(--rust);
+    }
+
+    .hero .field-list li::before,
+    .cache-card .field-list li::before { color: currentColor; }
+
+    .field-list code { font-size: .98em; font-weight: 750; }
+
+    .truth-note {
+      margin-top: 9px;
+      padding: 6px 7px;
+      border: 1px solid currentColor;
+      font-size: 11px;
+      line-height: 1.35;
+      font-weight: 800;
+    }
+
+    .solver-panel {
+      left: 45px;
+      top: 174px;
+      width: 720px;
+      height: 117px;
+      padding: 14px 17px;
+      color: var(--paper-2);
+      background: var(--ink);
+      box-shadow: 5px 5px 0 var(--yellow);
+    }
+
+    .solver-panel .panel-head,
+    .solver-result .panel-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .solver-panel h2,
+    .solver-result h2 { font-size: 22px; }
+
+    .solver-panel .type-chip {
+      color: var(--ink);
+      background: var(--paper-2);
+    }
+
+    .solver-types {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .solver-panel .solver-service { background: var(--yellow); }
+
+    .input-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 6px;
+      margin-top: 12px;
+    }
+
+    .input-token {
+      min-height: 26px;
+      padding: 5px 8px;
+      border: 1px solid rgba(255, 255, 255, .52);
+      font-size: 11px;
+      line-height: 1.15;
+      color: #ece8da;
+      white-space: nowrap;
+    }
+
+    .input-token code { color: var(--yellow); font-weight: 750; }
+
+    .solver-result {
+      left: 810px;
+      top: 174px;
+      width: 345px;
+      height: 117px;
+      padding: 14px 16px;
+      background: var(--yellow);
+      box-shadow: 5px 5px 0 var(--ink);
+    }
+
+    .solver-result .result-code {
+      margin-top: 11px;
+      padding: 8px 10px;
+      color: var(--paper-2);
+      background: var(--ink);
+      font-family: "SFMono-Regular", Menlo, monospace;
+      font-size: 14px;
+      font-weight: 750;
+    }
+
+    .solver-principle {
+      position: absolute;
+      left: 1195px;
+      top: 174px;
+      width: 680px;
+      height: 117px;
+      padding: 16px 20px 14px 70px;
+      border: 2px solid var(--ink);
+      background: var(--paper-2);
+      z-index: 5;
+    }
+
+    .solver-principle .quote-mark {
+      position: absolute;
+      left: 18px;
+      top: 7px;
+      font-family: Georgia, serif;
+      font-size: 70px;
+      line-height: 1;
+      color: var(--yellow);
+      -webkit-text-stroke: 1.5px var(--ink);
+    }
+
+    .solver-principle strong {
+      display: block;
+      margin-bottom: 5px;
+      font-size: 17px;
+    }
+
+    .solver-principle p {
+      margin: 0;
+      font-size: 14px;
+      line-height: 1.42;
+      color: var(--ink-2);
+    }
+
+    .solver-arrow {
+      position: absolute;
+      left: 765px;
+      top: 231px;
+      width: 45px;
+      height: 2px;
+      background: var(--ink);
+      z-index: 8;
+    }
+
+    .solver-arrow::after,
+    .main-arrow::after,
+    .exec-arrow::after,
+    .path-read-rail::after,
+    .structural-rail::after {
+      content: "";
+      position: absolute;
+      right: -1px;
+      top: 50%;
+      width: 9px;
+      height: 9px;
+      border-top: 2px solid currentColor;
+      border-right: 2px solid currentColor;
+      transform: translateY(-50%) rotate(45deg);
+      background: transparent;
+    }
+
+    .solver-arrow span {
+      position: absolute;
+      left: -28px;
+      top: -21px;
+      width: 102px;
+      font-size: 9.5px;
+      font-weight: 900;
+      text-align: center;
+      white-space: nowrap;
+    }
+
+    .solver-down {
+      position: absolute;
+      left: 978px;
+      top: 291px;
+      width: 2px;
+      height: 64px;
+      background: var(--ink);
+      z-index: 3;
+    }
+
+    .solver-down::after {
+      content: "";
+      position: absolute;
+      bottom: -1px;
+      left: 50%;
+      width: 9px;
+      height: 9px;
+      border-right: 2px solid var(--ink);
+      border-bottom: 2px solid var(--ink);
+      transform: translateX(-50%) rotate(45deg);
+      background: var(--paper);
+    }
+
+    .solver-down span {
+      position: absolute;
+      left: 12px;
+      top: 15px;
+      width: 190px;
+      padding: 2px 5px;
+      background: var(--paper);
+      font-size: 11px;
+      font-weight: 850;
+      white-space: nowrap;
+    }
+
+    .matchspec { left: 45px; top: 365px; width: 215px; height: 274px; }
+    .package-record { left: 300px; top: 365px; width: 250px; height: 274px; }
+    .repo-record { left: 590px; top: 365px; width: 260px; height: 274px; }
+    .cache-card { left: 890px; top: 365px; width: 280px; height: 274px; }
+    .prefix-record { left: 1210px; top: 348px; width: 290px; height: 306px; }
+    .prefix-state { left: 1540px; top: 348px; width: 335px; height: 306px; }
+
+    .matchspec::after {
+      content: "作为 specs 输入";
+      position: absolute;
+      left: 18px;
+      top: -84px;
+      width: 2px;
+      height: 82px;
+      padding-left: 10px;
+      border-left: 2px dotted var(--ink);
+      font-size: 10px;
+      line-height: 1.15;
+      font-weight: 900;
+      writing-mode: vertical-rl;
+    }
+
+    .intent-break {
+      position: absolute;
+      left: 260px;
+      top: 497px;
+      width: 40px;
+      height: 2px;
+      border-top: 2px dashed var(--ink);
+      z-index: 3;
+    }
+
+    .intent-break::before,
+    .intent-break::after {
+      content: "";
+      position: absolute;
+      top: -7px;
+      width: 2px;
+      height: 14px;
+      background: var(--ink);
+      transform: rotate(20deg);
+    }
+
+    .intent-break::before { left: 15px; }
+    .intent-break::after { left: 21px; }
+
+    .relation-caption {
+      position: absolute;
+      z-index: 9;
+      padding: 4px 6px;
+      border: 1px solid var(--ink);
+      background: var(--paper-2);
+      font-size: 10px;
+      line-height: 1.15;
+      font-weight: 900;
+      text-align: center;
+      white-space: nowrap;
+    }
+
+    .intent-caption { left: 241px; top: 332px; width: 82px; border-style: dashed; }
+    .compose-package { left: 533px; top: 333px; width: 74px; }
+    .cache-fill { left: 832px; top: 548px; width: 78px; background: var(--yellow); }
+    .cache-link { left: 1145px; top: 548px; width: 92px; background: var(--yellow); }
+    .prefix-index { left: 1480px; top: 333px; width: 88px; }
+
+    .main-arrow {
+      position: absolute;
+      top: 498px;
+      height: 2px;
+      color: var(--ink);
+      background: var(--ink);
+      z-index: 4;
+    }
+
+    .package-to-repo { left: 550px; width: 40px; }
+    .repo-to-cache { left: 850px; width: 40px; top: 574px; background: var(--yellow); color: var(--yellow); }
+    .cache-to-prefix { left: 1170px; width: 40px; top: 574px; background: var(--yellow); color: var(--yellow); }
+    .prefix-to-state { left: 1500px; width: 40px; }
+
+    .structural-rail {
+      position: absolute;
+      left: 850px;
+      top: 319px;
+      width: 360px;
+      height: 38px;
+      border-top: 2px solid var(--rust);
+      border-right: 2px solid var(--rust);
+      color: var(--rust);
+      z-index: 4;
+    }
+
+    .structural-rail::after {
+      right: -6px;
+      top: auto;
+      bottom: -1px;
+      transform: rotate(135deg);
+    }
+
+    .structural-rail span {
+      position: absolute;
+      left: 55px;
+      top: -20px;
+      padding: 2px 7px;
+      color: var(--rust);
+      background: var(--paper);
+      font-size: 11px;
+      font-weight: 900;
+      white-space: nowrap;
+    }
+
+    .cache-inner {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 7px;
+      margin-top: 8px;
+    }
+
+    .cache-unit {
+      min-height: 48px;
+      padding: 7px 8px;
+      border: 1px solid rgba(255, 255, 255, .48);
+      font-size: 11px;
+      line-height: 1.3;
+    }
+
+    .cache-unit strong {
+      display: block;
+      margin-bottom: 3px;
+      color: var(--yellow);
+      font-family: "SFMono-Regular", Menlo, monospace;
+      font-size: 12px;
+    }
+
+    .prefix-state .role { min-height: 22px; }
+
+    .state-stack {
+      display: grid;
+      gap: 8px;
+      margin-top: 9px;
+    }
+
+    .state-unit {
+      position: relative;
+      padding: 8px 9px 7px 75px;
+      min-height: 65px;
+      border: 1.5px solid var(--ink);
+      background: var(--paper-2);
+    }
+
+    .state-unit .type-chip {
+      position: absolute;
+      left: 8px;
+      top: 9px;
+      width: 58px;
+      white-space: normal;
+      text-align: center;
+      line-height: 1.1;
+    }
+
+    .state-unit strong {
+      display: block;
+      margin-bottom: 3px;
+      font-family: "SFMono-Regular", Menlo, monospace;
+      font-size: 15px;
+    }
+
+    .state-unit span {
+      display: block;
+      font-size: 11.5px;
+      line-height: 1.3;
+    }
+
+    .state-cardinality {
+      display: grid;
+      gap: 2px;
+      margin-top: 8px;
+      padding: 6px 8px;
+      color: var(--paper-2);
+      background: var(--ink);
+      font-size: 9.5px;
+      line-height: 1.25;
+      font-weight: 800;
+    }
+
+    .execution-panel {
+      top: 710px;
+      height: 397px;
+    }
+
+    .archive-panel {
+      left: 45px;
+      width: 490px;
+      padding: 17px;
+    }
+
+    .transaction-panel {
+      left: 580px;
+      width: 620px;
+      padding: 17px;
+      background: rgba(255, 200, 0, .16);
+      border-width: 3px;
+    }
+
+    .install-panel {
+      left: 1235px;
+      width: 640px;
+      padding: 17px;
+    }
+
+    .panel-title-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      min-height: 28px;
+      gap: 12px;
+    }
+
+    .panel-title-row h2 { font-size: 21px; }
+
+    .panel-title-row .semantic {
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 850;
+      letter-spacing: .06em;
+    }
+
+    .archive-shell {
+      position: relative;
+      margin-top: 14px;
+      height: 313px;
+      padding: 14px;
+      border: 2px dashed var(--ink);
+      background: #e8e2d2;
+    }
+
+    .physical-label {
+      position: absolute;
+      right: 9px;
+      top: 8px;
+      padding: 3px 6px;
+      color: var(--paper-2);
+      background: var(--rust);
+      font-size: 10px;
+      font-weight: 900;
+      letter-spacing: .08em;
+    }
+
+    .archive-shell > strong {
+      display: block;
+      margin-bottom: 11px;
+      font-family: "SFMono-Regular", Menlo, monospace;
+      font-size: 17px;
+    }
+
+    .nested-card {
+      position: relative;
+      padding: 12px 13px;
+      border: 2px solid var(--ink);
+      background: var(--paper-2);
+    }
+
+    .nested-card h3 { font-size: 18px; }
+
+    .nested-card .type-chip {
+      position: absolute;
+      right: 10px;
+      top: 9px;
+    }
+
+    .nested-card p {
+      margin: 7px 0 0;
+      font-size: 13px;
+      line-height: 1.38;
+    }
+
+    .paths-entry-instruction {
+      margin-top: 32px;
+      min-height: 103px;
+      color: var(--paper-2);
+      background: var(--ink);
+      border-color: var(--ink);
+    }
+
+    .paths-entry-instruction .type-chip {
+      color: var(--ink);
+      background: var(--yellow);
+    }
+
+    .owns-down {
+      position: absolute;
+      left: 49px;
+      top: 139px;
+      height: 32px;
+      border-left: 2px solid var(--ink);
+      font-size: 10px;
+      font-weight: 900;
+    }
+
+    .owns-down::after {
+      content: "";
+      position: absolute;
+      left: -6px;
+      bottom: -1px;
+      width: 9px;
+      height: 9px;
+      border-right: 2px solid var(--ink);
+      border-bottom: 2px solid var(--ink);
+      transform: rotate(45deg);
+      background: #e8e2d2;
+    }
+
+    .owns-down span {
+      position: absolute;
+      left: 10px;
+      top: 3px;
+      width: 150px;
+      white-space: nowrap;
+    }
+
+    .transaction-inputs {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-top: 14px;
+    }
+
+    .transaction-input {
+      padding: 9px 10px;
+      border: 1.5px solid var(--ink);
+      background: var(--paper-2);
+    }
+
+    .transaction-input span {
+      display: block;
+      margin-bottom: 4px;
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 900;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+
+    .transaction-input code { font-size: 13px; font-weight: 800; }
+
+    .diff-formula {
+      position: relative;
+      margin-top: 25px;
+      padding: 13px 14px;
+      color: var(--paper-2);
+      background: var(--ink);
+      border: 2px solid var(--ink);
+    }
+
+    .diff-formula::before,
+    .diff-formula::after {
+      content: "";
+      position: absolute;
+      top: -27px;
+      width: 2px;
+      height: 25px;
+      background: var(--ink);
+    }
+
+    .diff-formula::before { left: 25%; }
+    .diff-formula::after { right: 25%; }
+
+    .diff-formula .formula {
+      display: block;
+      font-size: 14px;
+      line-height: 1.35;
+      font-weight: 780;
+    }
+
+    .diff-formula small {
+      display: block;
+      margin-top: 5px;
+      color: #cac5b7;
+      font-size: 11px;
+    }
+
+    .operation-relation {
+      margin: 13px 0 7px;
+      font-size: 11px;
+      font-weight: 900;
+      text-align: center;
+    }
+
+    .operation-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 6px;
+    }
+
+    .operation {
+      display: grid;
+      place-items: center;
+      min-height: 54px;
+      padding: 4px;
+      border: 1.5px solid var(--ink);
+      background: var(--paper-2);
+      font-family: "SFMono-Regular", Menlo, monospace;
+      font-size: 12px;
+      font-weight: 800;
+      text-align: center;
+    }
+
+    .transaction-foot {
+      margin-top: 9px;
+      font-size: 11px;
+      line-height: 1.35;
+      color: var(--muted);
+      text-align: center;
+    }
+
+    .installer-card {
+      position: absolute;
+      left: 18px;
+      top: 62px;
+      width: 235px;
+      min-height: 140px;
+      padding: 13px;
+      color: var(--paper-2);
+      background: var(--ink);
+      border: 2px solid var(--ink);
+    }
+
+    .installer-card h3 {
+      margin: 8px 0 9px;
+      font-family: "SFMono-Regular", Menlo, monospace;
+      font-size: 21px;
+    }
+
+    .installer-card ul {
+      margin: 0;
+      padding-left: 17px;
+      color: #ded9ca;
+      font-size: 11.5px;
+      line-height: 1.5;
+    }
+
+    .prefix-paths-card {
+      position: absolute;
+      left: 292px;
+      top: 62px;
+      width: 322px;
+      min-height: 140px;
+      padding: 13px;
+      border: 2px solid var(--ink);
+      background: var(--yellow);
+    }
+
+    .prefix-paths-card h3 {
+      margin: 7px 0 7px;
+      font-family: "SFMono-Regular", Menlo, monospace;
+      font-size: 20px;
+    }
+
+    .prefix-paths-card p {
+      margin: 0;
+      font-size: 12px;
+      line-height: 1.35;
+      font-weight: 650;
+    }
+
+    .path-result-card {
+      position: absolute;
+      left: 292px;
+      top: 238px;
+      width: 322px;
+      min-height: 116px;
+      padding: 12px;
+      color: var(--paper-2);
+      background: var(--ink);
+      border: 2px solid var(--ink);
+    }
+
+    .path-result-card h3 {
+      margin: 7px 0 6px;
+      font-family: "SFMono-Regular", Menlo, monospace;
+      font-size: 18px;
+    }
+
+    .path-result-card p {
+      margin: 0;
+      color: #d8d3c5;
+      font-size: 11.5px;
+      line-height: 1.35;
+    }
+
+    .path-result-card .type-chip {
+      color: var(--ink);
+      background: var(--paper-2);
+    }
+
+    .paths-down {
+      position: absolute;
+      left: 451px;
+      top: 202px;
+      height: 36px;
+      border-left: 2px solid var(--ink);
+      z-index: 8;
+    }
+
+    .paths-down::after {
+      content: "";
+      position: absolute;
+      left: -6px;
+      bottom: -1px;
+      width: 9px;
+      height: 9px;
+      border-right: 2px solid var(--ink);
+      border-bottom: 2px solid var(--ink);
+      transform: rotate(45deg);
+      background: var(--paper-2);
+    }
+
+    .paths-down span {
+      position: absolute;
+      left: 10px;
+      top: 5px;
+      width: 135px;
+      font-size: 10px;
+      font-weight: 900;
+      white-space: nowrap;
+    }
+
+    .exec-arrow {
+      position: absolute;
+      height: 2px;
+      color: var(--ink);
+      background: var(--ink);
+      z-index: 9;
+    }
+
+    .transaction-to-installer {
+      left: 1200px;
+      top: 852px;
+      width: 53px;
+    }
+
+    .transaction-to-installer span {
+      position: absolute;
+      left: -15px;
+      top: -21px;
+      width: 78px;
+      font-size: 10px;
+      font-weight: 900;
+      text-align: center;
+    }
+
+    .installer-to-paths {
+      left: 1488px;
+      top: 851px;
+      width: 39px;
+      background: var(--rust);
+      color: var(--rust);
+    }
+
+    .installer-to-paths span {
+      position: absolute;
+      left: -17px;
+      top: -21px;
+      width: 73px;
+      color: var(--rust);
+      font-size: 10px;
+      font-weight: 900;
+      text-align: center;
+    }
+
+    .prefix-owns-paths {
+      position: absolute;
+      left: 1355px;
+      top: 654px;
+      width: 175px;
+      height: 128px;
+      border-left: 2px solid var(--rust);
+      border-bottom: 2px solid var(--rust);
+      z-index: 3;
+    }
+
+    .prefix-owns-paths::after {
+      content: "";
+      position: absolute;
+      right: -1px;
+      bottom: -6px;
+      width: 9px;
+      height: 9px;
+      border-top: 2px solid var(--rust);
+      border-right: 2px solid var(--rust);
+      transform: rotate(45deg);
+      background: var(--paper-2);
+    }
+
+    .prefix-owns-paths span {
+      position: absolute;
+      left: 10px;
+      top: 20px;
+      padding: 3px 6px;
+      color: var(--rust);
+      background: var(--paper);
+      font-size: 10px;
+      font-weight: 900;
+      white-space: nowrap;
+    }
+
+    .conflict-strip {
+      position: absolute;
+      left: 18px;
+      top: 226px;
+      width: 235px;
+      min-height: 128px;
+      padding: 10px 11px;
+      border: 1.5px dashed var(--ink);
+      background: #ece7d9;
+    }
+
+    .conflict-strip .support-label {
+      display: inline-block;
+      margin-bottom: 6px;
+      padding: 3px 5px;
+      color: var(--paper-2);
+      background: var(--sage);
+      font-size: 9px;
+      font-weight: 900;
+      letter-spacing: .08em;
+    }
+
+    .conflict-strip strong {
+      display: block;
+      font-family: "SFMono-Regular", Menlo, monospace;
+      font-size: 12px;
+      line-height: 1.28;
+    }
+
+    .conflict-strip p {
+      margin: 6px 0 0;
+      font-size: 10.5px;
+      line-height: 1.35;
+    }
+
+    .conflict-strip code { font-size: 10.5px; font-weight: 750; }
+
+    .path-read-rail {
+      position: absolute;
+      left: 535px;
+      top: 1127px;
+      width: 718px;
+      height: 2px;
+      color: var(--rust);
+      background: var(--rust);
+      z-index: 4;
+    }
+
+    .path-read-rail span {
+      position: absolute;
+      left: 170px;
+      top: -18px;
+      padding: 2px 8px;
+      color: var(--rust);
+      background: var(--paper);
+      font-size: 10px;
+      font-weight: 900;
+      white-space: nowrap;
+    }
+
+    .footer {
+      position: absolute;
+      left: 45px;
+      right: 45px;
+      bottom: 25px;
+      height: 35px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-top: 2px solid var(--ink);
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 750;
+      letter-spacing: .03em;
+    }
+
+    .footer strong { color: var(--ink); }
+
+    .footer .thesis {
+      color: var(--ink);
+      font-size: 13px;
+      font-weight: 900;
+    }
+
+    .footer .thesis em {
+      color: var(--rust);
+      font-style: normal;
+    }
+  </style>
+</head>
+<body>
+  <main id="canvas" aria-label="Rattler 包身份血缘领域模型图">
+    <header class="masthead">
+      <div class="title-block">
+        <div class="eyebrow"><span class="mark"></span>Direction B · Domain model lineage · 1920 × 1200</div>
+        <h1>同一包，六种身份：<span class="rust">Rattler</span> 模型血缘</h1>
+        <div class="subtitle">没有厚重的 Environment 实体：路径定义边界，记录定义状态，事务定义变化。</div>
+      </div>
+
+      <div class="legend" aria-label="模型分类图例">
+        <div class="legend-title">MODEL CLASSIFICATION</div>
+        <span class="legend-chip persistent">持久模型</span>
+        <span class="legend-chip value">值对象</span>
+        <span class="legend-chip derived">派生模型</span>
+        <span class="legend-chip service">执行服务</span>
+      </div>
+
+      <div class="source-stamp" aria-label="Rattler README 视觉来源标识">
+        <img src="data:image/jpeg;base64,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" alt="Rattler README 黄色视觉图缩略图" />
+        <span>Visual anchor · repository README asset</span>
+      </div>
+    </header>
+
+    <div class="section-kicker solver-kicker"><span class="index">01</span>求解面 · 从意图得到 desired identity</div>
+
+    <section class="panel solver-panel" aria-label="SolverTask 求解输入">
+      <div class="panel-head">
+        <h2>SolverTask</h2>
+        <div class="solver-types">
+          <span class="type-chip value">值对象</span>
+          <span class="type-chip service solver-service">Solver · 执行服务</span>
+        </div>
+      </div>
+      <div class="input-grid">
+        <div class="input-token"><code>specs</code> · MatchSpec 0..*</div>
+        <div class="input-token"><code>available</code> · RepoDataRecord 0..*</div>
+        <div class="input-token"><code>locked</code> packages 0..*</div>
+        <div class="input-token"><code>pinned</code> packages 0..*</div>
+        <div class="input-token"><code>virtual</code> · GenericVirtualPackage 0..* · 值对象</div>
+        <div class="input-token"><code>constraints</code> 0..*</div>
+      </div>
+    </section>
+
+    <section class="panel solver-result" aria-label="SolverResult 求解结果">
+      <div class="panel-head">
+        <h2>SolverResult</h2>
+        <span class="type-chip derived">派生模型</span>
+      </div>
+      <div class="result-code">records: Vec&lt;RepoDataRecord&gt; · 1 → 0..*</div>
+    </section>
+
+    <aside class="solver-principle">
+      <span class="quote-mark">“</span>
+      <strong>求解选择“应该存在什么”，不会产生安装事实。</strong>
+      <p><code>SolverResult</code> 是目标 <em>RepoDataRecord</em> 集合；缓存来源、实际文件与路径结果，要等 <code>Transaction</code> 与 <code>Installer</code> 执行后才出现。</p>
+    </aside>
+
+    <div class="solver-arrow" aria-hidden="true"><span>Solver 成功求解为 · 1:1</span></div>
+    <div class="solver-down" aria-hidden="true"><span>输出目标记录 · 0..*</span></div>
+
+    <div class="section-kicker lineage-kicker"><span class="index">02</span>身份护照带 · 结构血缘 + 物理来源</div>
+
+    <article class="model-card matchspec" data-stage="00">
+      <div class="card-top"><span class="type-chip value">值对象</span><span class="micro">Intent</span></div>
+      <h2>MatchSpec</h2>
+      <p class="role">“我要什么包”的可匹配意图，进入求解器，而不是已选中的包记录。</p>
+      <ul class="field-list">
+        <li><code>specs</code> 中的约束表达</li>
+        <li>可有 0..* 个用户需求</li>
+        <li>不携带 URL、缓存或安装文件</li>
+      </ul>
+      <div class="truth-note">意图层 ≠ 包事实层</div>
+    </article>
+
+    <article class="model-card package-record" data-stage="01">
+      <div class="card-top"><span class="type-chip persistent">持久模型</span><span class="micro">Package identity</span></div>
+      <h2>PackageRecord</h2>
+      <p class="role">与仓库位置、环境位置无关的“包本体身份”。</p>
+      <ul class="field-list">
+        <li><code>name · version · build</code></li>
+        <li><code>platform · subdir</code></li>
+        <li><code>depends · constrains</code></li>
+        <li><code>hash</code> 等包属性</li>
+      </ul>
+      <div class="truth-note">可生成 <code>CacheKey</code></div>
+    </article>
+
+    <article class="model-card repo-record" data-stage="02">
+      <div class="card-top"><span class="type-chip persistent">持久模型</span><span class="micro">Repository identity</span></div>
+      <h2>RepoDataRecord</h2>
+      <p class="role">包身份 + 仓库定位：成为可选、可下载的具体候选。</p>
+      <ul class="field-list">
+        <li><code>package_record: PackageRecord</code></li>
+        <li><code>identifier</code> · archive identity</li>
+        <li><code>url</code> · 下载定位</li>
+        <li><code>channel</code> · 仓库语境</li>
+      </ul>
+    </article>
+
+    <article class="model-card cache-card" data-stage="03">
+      <div class="card-top"><span class="type-chip service">执行服务</span><span class="micro">Shared physical provenance</span></div>
+      <h2>PackageCache</h2>
+      <p class="role">管理共享磁盘上的已解压包；它是物理来源，不是结构父类。</p>
+      <div class="cache-inner">
+        <div class="cache-unit"><strong>CacheKey</strong>值对象 · 由 PackageRecord 身份生成</div>
+        <div class="cache-unit"><strong>Cache layer</strong>一个 cache 可管理 1..* 层</div>
+        <div class="cache-unit" style="grid-column: 1 / -1"><strong>Extracted Package Dir</strong>PackageCache 1 管理目录 0..* · 每个目录可被 PrefixRecord 0..* 共享引用</div>
+      </div>
+    </article>
+
+    <article class="model-card hero prefix-record" data-stage="04">
+      <div class="card-top"><span class="type-chip persistent">持久模型</span><span class="micro">Installed fact · semantic center</span></div>
+      <h2>PrefixRecord</h2>
+      <p class="role">“这个具体包，在这个 Prefix 中的一次已安装事实”。它是 Package 与 Prefix 间的丰富关联实体。</p>
+      <ul class="field-list">
+        <li><code>repodata_record: RepoDataRecord</code></li>
+        <li><code>requested_specs</code> · 请求来源</li>
+        <li><code>files</code> · 实际安装文件</li>
+        <li><code>paths_data: PrefixPaths</code></li>
+        <li><code>Link</code> · 缓存来源</li>
+      </ul>
+    </article>
+
+    <article class="model-card prefix-state" data-stage="05">
+      <div class="card-top"><span class="type-chip derived">环境状态</span><span class="micro">Path-scoped view</span></div>
+      <h2>PrefixData / Prefix</h2>
+      <p class="role">环境身份与已安装状态在路径边界处收束。</p>
+      <div class="state-stack">
+        <div class="state-unit">
+          <span class="type-chip value">值对象</span>
+          <strong>Prefix</strong>
+          <span>环境根路径包装；保证 <code>conda-meta</code> 存在。</span>
+        </div>
+        <div class="state-unit">
+          <span class="type-chip derived">派生模型</span>
+          <strong>PrefixData</strong>
+          <span><code>conda-meta</code> 的惰性视图；按 <code>PackageName</code> 索引记录。</span>
+        </div>
+      </div>
+      <div class="state-cardinality">
+        <div><code>Prefix 1 ↔ 1 PrefixData</code> · 对应 / 惰性查看 <code>conda-meta</code></div>
+        <div><code>Prefix 1 → PrefixRecord 0..*</code> · 包含已安装事实</div>
+        <div><code>PrefixData 1 → PrefixRecord 0..*</code> · 按 <code>PackageName</code> 索引</div>
+      </div>
+    </article>
+
+    <div class="intent-break" aria-hidden="true"></div>
+    <div class="relation-caption intent-caption">经求解关联<br />非直接组合</div>
+    <div class="main-arrow package-to-repo" aria-hidden="true"></div>
+    <div class="relation-caption compose-package">组合 PackageRecord<br /><span class="cardinality">1 : 1</span></div>
+    <div class="main-arrow repo-to-cache" aria-hidden="true"></div>
+    <div class="relation-caption cache-fill"><code>URL</code> 填充</div>
+    <div class="main-arrow cache-to-prefix" aria-hidden="true"></div>
+    <div class="relation-caption cache-link"><code>Link</code> 记录来源<br /><span class="cardinality">dir 1 ← 0..*</span></div>
+    <div class="main-arrow prefix-to-state" aria-hidden="true"></div>
+    <div class="relation-caption prefix-index">按包名索引<br /><span class="cardinality">1 → 0..*</span></div>
+
+    <div class="structural-rail" aria-hidden="true"><span><code>PrefixRecord</code> 组合 <code>RepoDataRecord</code> · <b>1:1</b>（结构血缘）</span></div>
+
+    <div class="section-kicker execution-kicker"><span class="index">03</span>变更与路径证据 · current + desired → installed result</div>
+
+    <section class="panel execution-panel archive-panel" aria-label="Package Archive 与 PathsJson">
+      <div class="panel-title-row">
+        <h2>Package Archive</h2>
+        <span class="semantic">安装前 · 指令来源</span>
+      </div>
+      <div class="archive-shell">
+        <span class="physical-label">物理载体</span>
+        <strong>archive / extracted content</strong>
+        <article class="nested-card">
+          <span class="type-chip persistent">持久模型</span>
+          <h3>PathsJson</h3>
+          <p>包内安装指令集合；描述内容应如何进入目标 Prefix。</p>
+        </article>
+        <div class="owns-down" aria-hidden="true"><span>拥有 · <code>1 → 0..*</code></span></div>
+        <article class="nested-card paths-entry-instruction">
+          <span class="type-chip persistent">持久模型</span>
+          <h3>PathsEntry</h3>
+          <p>安装指令：尚未成为某个 Prefix 中的实际路径结果。</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="panel execution-panel transaction-panel" aria-label="Transaction 变更计划">
+      <div class="panel-title-row">
+        <h2>Transaction</h2>
+        <span class="type-chip derived">派生模型</span>
+      </div>
+      <div class="transaction-inputs">
+        <div class="transaction-input">
+          <span>current · environment fact</span>
+          <code>PrefixRecord[0..*]</code>
+        </div>
+        <div class="transaction-input">
+          <span>desired · solver output</span>
+          <code>RepoDataRecord[0..*]</code>
+        </div>
+      </div>
+      <div class="diff-formula">
+        <span class="formula">Transaction::from_current_and_desired(current, desired)</span>
+        <small>由 current + desired 做差，得到“要改变什么”，而不是新的包身份。</small>
+      </div>
+      <div class="operation-relation"><code>Transaction 1</code> 拥有 <code>TransactionOperation 0..*</code></div>
+      <div class="operation-grid">
+        <div class="operation">Install</div>
+        <div class="operation">Change</div>
+        <div class="operation">Reinstall</div>
+        <div class="operation">Remove</div>
+      </div>
+      <div class="transaction-foot">目标记录与当前记录都保留各自语义；Transaction 只表达二者之间的差。</div>
+    </section>
+
+    <section class="panel execution-panel install-panel" aria-label="Installer 与 PrefixPaths">
+      <div class="panel-title-row">
+        <h2>Execution + Installed paths</h2>
+        <span class="semantic">安装后 · 结果证据</span>
+      </div>
+
+      <article class="installer-card">
+        <span class="type-chip service">执行服务</span>
+        <h3>Installer</h3>
+        <ul>
+          <li>执行 <code>TransactionOperation</code></li>
+          <li>读取 <code>PathsJson</code></li>
+          <li>读取已解压缓存目录</li>
+          <li>链接 / 写入目标 Prefix</li>
+        </ul>
+      </article>
+
+      <article class="prefix-paths-card">
+        <span class="type-chip persistent">持久模型</span>
+        <h3>PrefixPaths</h3>
+        <p><code>PrefixRecord 1</code> 拥有且仅拥有 <code>PrefixPaths 1</code>；记录在此环境中真正落地后的路径集合。</p>
+      </article>
+
+      <div class="paths-down" aria-hidden="true"><span>拥有 · <code>1 → 0..*</code></span></div>
+
+      <article class="path-result-card">
+        <span class="type-chip persistent">持久模型</span>
+        <h3>PathsEntry</h3>
+        <p>安装结果：已经绑定某个 Prefix 的实际路径事实。与包内指令同名，但语境不同。</p>
+      </article>
+
+      <aside class="conflict-strip">
+        <span class="support-label">执行支持 · 非核心聚合</span>
+        <strong>ClobberRegistry / PathResolver</strong>
+        <p>以路径 trie 处理多包占用同一路径；派生 <code>ClobberedPath 0..*</code>。它是执行期索引，不抢占 <code>PrefixRecord</code> 的语义中心。</p>
+      </aside>
+    </section>
+
+    <div class="exec-arrow transaction-to-installer" aria-hidden="true"><span>Installer 执行</span></div>
+    <div class="exec-arrow installer-to-paths" aria-hidden="true"><span>物化结果</span></div>
+    <div class="prefix-owns-paths" aria-hidden="true"><span>拥有 · <code>1:1</code></span></div>
+    <div class="path-read-rail" aria-hidden="true"><span><code>Installer</code> 读取 Package Archive / <code>PathsJson</code> · 每个 archive 1 份指令集</span></div>
+
+    <footer class="footer">
+      <div>关系记法：箭头写<strong>关系动词</strong>；端点数字写<strong>基数</strong>；虚线表示执行支持或非组合关联。</div>
+      <div class="thesis"><em>Identity</em> 逐层变具体，<em>State</em> 只在 Prefix 边界内成立。</div>
+      <div>Rattler · model lineage / B</div>
+    </footer>
+  </main>
+</body>
+</html>

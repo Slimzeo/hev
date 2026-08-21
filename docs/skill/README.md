@@ -76,6 +76,7 @@ skill/
 ├── research-spine.md
 ├── evidence-ledger.md
 ├── skill-workspace-env-idea.md
+├── cur_multi_skill_shortage.md
 ├── verification-report.json
 ├── notes/
 │   └── paper-detailed-notes.html
@@ -129,6 +130,7 @@ skill/
 ### 后续设计与方法复盘
 
 - [`skill-workspace-env-idea.md`](skill-workspace-env-idea.md)：Skill Workspace、Execution Env、全局 Supervisor、family-level Evolver、case curator、held-out eval、promotion 与 rollback 的原始构想备份。
+- [`cur_multi_skill_shortage.md`](cur_multi_skill_shortage.md)：区分论文实证与产品推演，分析其多 Skill / 用户视角不足，并提出 user-owned Skill Pack、社区 Registry、职责边界与未来研究方案。
 - [`inspire/01-learning-the-user-paper-reading-paradigm.md`](inspire/01-learning-the-user-paper-reading-paradigm.md)：对 DeepSeek Harness 论文解读范式的学习总结，以及旧版解读失败原因。
 
 ## 推荐阅读路径
@@ -143,8 +145,9 @@ skill/
 
 1. [`articles/03-architecture-decision-guide.html`](articles/03-architecture-decision-guide.html)
 2. [`evidence-ledger.md`](evidence-ledger.md)
-3. [`skill-workspace-env-idea.md`](skill-workspace-env-idea.md)
-4. 原论文 p.7-11、p.20-24
+3. [`cur_multi_skill_shortage.md`](cur_multi_skill_shortage.md)
+4. [`skill-workspace-env-idea.md`](skill-workspace-env-idea.md)
+5. 原论文 p.7-11、p.15、p.17、p.20-24
 
 ### 研究复核与引用
 
