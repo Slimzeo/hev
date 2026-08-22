@@ -392,9 +392,9 @@ Agent 进程 C 显式使用 env-c
 激活脚本设置：
 
 ```bash
-SKILL_ENV_ID=env-a
-SKILL_ENV_PREFIX=/.../env-a
-SKILL_ENV_MANIFEST=/.../env-a/manifest.json
+HEV_ID=env-a
+HEV_PREFIX=/.../env-a
+HEV_MANIFEST=/.../env-a/manifest.json
 PATH=/.../env-a/bin:$PATH
 ```
 
@@ -406,11 +406,11 @@ PATH=/.../env-a/bin:$PATH
 pip install xxx
 ```
 
-`pip` 不需要理解 `SKILL_ENV_ID`，因为 PATH 已经让它使用目标环境里的 Python。
+`pip` 不需要理解 `HEV_ID`，因为 PATH 已经让它使用目标环境里的 Python。
 
 Skill Resolver 则可以读取：
 
-`SKILL_ENV_ID`
+`HEV_ID`
 
 再找到对应 Environment 和 `EnvironmentSkill` 列表。
 
@@ -429,7 +429,7 @@ Skill Resolver 则可以读取：
 应该在入口解析一次：
 
 ```
-SKILL_ENV_ID → ActiveEnvironmentContext
+HEV_ID → ActiveEnvironmentContext
 ```
 
 后面的 Environment 相关逻辑显式接收 Context。

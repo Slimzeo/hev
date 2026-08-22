@@ -141,7 +141,7 @@ skill/
 2. [`articles/01-engineering-walkthrough.html`](articles/01-engineering-walkthrough.html)
 3. [`design-demos/03-evidence-lens-lab.html`](design-demos/03-evidence-lens-lab.html)
 
-### 设计 Skill Env
+### 设计 HEV
 
 1. [`articles/03-architecture-decision-guide.html`](articles/03-architecture-decision-guide.html)
 2. [`evidence-ledger.md`](evidence-ledger.md)
@@ -173,4 +173,4 @@ skill/
 
 > 这个不可变 Skill 版本，在这个 target model、harness、工具与权限组合下，相对 incumbent 和 no-skill baseline，是否在冻结的 held-out cases 上产生可重复的正 utility，并且具备可追溯、可灰度、可回滚的证据？
 
-这也是本资料包与 `skill-env` 项目的直接连接点。
+这也是本资料包与 `hev` 项目的直接连接点。
