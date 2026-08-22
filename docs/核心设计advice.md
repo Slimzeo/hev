@@ -1,4 +1,4 @@
-# Skill Env 核心设计建议
+# HEV 核心设计建议
 
 > 状态：团队讨论稿  
 > 日期：2026-08-22  
@@ -6,7 +6,7 @@
 
 ## 一、核心结论
 
-Skill Env 不应以 Python 虚拟环境管理器为核心，也不应重复 Codex、Claude Code、TraeX 等 Harness 已经提供的 Skill/Plugin 安装与发现能力。
+HEV，也不应重复 Codex、Claude Code、TraeX 等 Harness 已经提供的 Skill/Plugin 安装与发现能力。
 
 项目建议定位为：
 
@@ -16,12 +16,12 @@ Skill Env 不应以 Python 虚拟环境管理器为核心，也不应重复 Code
 
 最重要的边界是：
 
-- Skill Env 决定“这个环境应该包含什么”；
+- HEV 决定“这个环境应该包含什么”；
 - Host Adapter 决定“如何表达给具体 Harness”；
 - Codex、Claude Code、TraeX 等 Harness 负责真正发现、加载、执行、审批和沙箱；
 - Python venv、容器等只是可选 Runtime Provider，不是 Environment 的必选组成部分。
 
-## 二、为什么仍然需要 Skill Env
+## 二、为什么仍然需要 HEV
 
 当前主流 Harness 已经分别具备一部分 Context 管理能力，例如：
 
@@ -84,7 +84,7 @@ Harness
 建议的工程结构：
 
 ```text
-skill-env Core
+HEV Core
 ├── CLI / Local API
 ├── Environment registry
 ├── Resolver
@@ -271,7 +271,7 @@ Codex 已经负责 Skill/Plugin/MCP/Hook 的最终发现与执行。Adapter 可�
 一期优先采用启动前物化：
 
 ```bash
-skill-env run paper-research -- codex
+hev run paper-research -- codex
 ```
 
 而不是承诺在一个已经运行的 Codex 会话中硬切换全部 Context。
@@ -287,7 +287,7 @@ Claude Code、TraeX 等 Adapter 应遵循相同逻辑，但分别生成其原生
 Plugin 适合承担：
 
 - 环境创建、查询、差异预览和切换引导；
-- 调用 Skill Env 本地 CLI 或 MCP 服务；
+- 调用 HEV 本地 CLI 或 MCP 服务；
 - 在 SessionStart 校验当前环境；
 - 展示冲突、兼容性和权限提示；
 - 将常用操作包装成 Agent 可调用的 Skill。
@@ -329,13 +329,13 @@ Sub-agent 默认继承父 Agent 的环境；需要专用能力时，通过预定
 - `overlay`：继承父环境，并覆盖 Skill、模型或 MCP 配置；
 - `isolated`：通过独立进程或 Worktree 启动，提供更强隔离。
 
-Sub-agent 的权限不能超过父会话的权限上限。Hook 只负责校验和补充上下文，不能代替环境物化；需要硬隔离时，应由 Skill Env 启动独立 Agent 进程。
+Sub-agent 的权限不能超过父会话的权限上限。Hook 只负责校验和补充上下文，不能代替环境物化；需要硬隔离时，应由 HEV 启动独立 Agent 进程。
 
 ## 八、Rattler 思想如何复用
 
-Rattler/Conda 不只是 Python 管理器。其通用思想可以用于 Skill Environment：
+Rattler/Conda 不只是 Python 管理器。其通用思想可以用于 HEV：
 
-| Rattler | Skill Env |
+| Rattler | HEV |
 | --- | --- |
 | PackageCache | Artifact Store |
 | PackageRecord | Artifact 元数据 |
@@ -388,13 +388,13 @@ Rattler/Conda 不只是 Python 管理器。其通用思想可以用于 Skill Env
 建议最小命令：
 
 ```bash
-skill-env create <name>
-skill-env add <name> <skill-path-or-ref>
-skill-env lock <name>
-skill-env inspect <name>
-skill-env diff <name>
-skill-env run <name> -- <harness-command>
-skill-env remove <name>
+hev create <name>
+hev add <name> <skill-path-or-ref>
+hev lock <name>
+hev inspect <name>
+hev diff <name>
+hev run <name> -- <harness-command>
+hev remove <name>
 ```
 
 ### 9.2 一期暂不实现
@@ -413,7 +413,7 @@ skill-env remove <name>
 
 核心验收标准：
 
-> `env-a` 与 `env-b` 锁定不同 Skill 集合；分别通过 Skill Env 启动 Agent 后，Harness 实际发现的 Skill 与各自 Lock 一致，并且切换不会修改共享 Artifact 内容或污染另一个环境。
+> `env-a` 与 `env-b` 锁定不同 Skill 集合；分别通过 HEV 启动 Agent 后，Harness 实际发现的 Skill 与各自 Lock 一致，并且切换不会修改共享 Artifact 内容或污染另一个环境。
 
 同时验证：
 
@@ -453,7 +453,7 @@ skill-env remove <name>
 7. 同名 Skill 的冲突规则是什么：禁止、命名空间还是显式 alias？
 8. 跨 Harness 无法等价表达的能力，应拒绝、降级还是允许 Adapter override？
 9. `activate` 是否保留，还是一期只支持更可靠的 `run <env> -- <command>`？
-10. 项目名称 `skill-env` 是否仍准确，还是应突出 Agent Context/Profile？
+10. 项目最终名称为 `hev`。
 
 ## 十二、对现有开发方案的调整建议
 
