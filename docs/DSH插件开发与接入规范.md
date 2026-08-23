@@ -1,5 +1,7 @@
 # HEV DSH 双插件开发与接入规范
 
+(不是很规范，仅作为建议advice)
+
 > 依据 DeepSeek Harness `0.1.1-rc.2`（源码提交 `b150a55`）。DSH 仍处于 Developer Preview，升级可能包含破坏性变更。
 
 ## 方案定位

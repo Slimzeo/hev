@@ -43,11 +43,24 @@ function packageDirs(): Map<string, string> {
 }
 
 const dirs = packageDirs()
+const hevDirs = new Map([
+  ['@hev/dsh-runtime', join(here, 'packages/runtime')],
+  ['@hev/dsh-skill', join(here, 'packages/skill')],
+])
 
 const dshSource = {
   name: 'dsh-source-resolver',
   enforce: 'pre' as const,
   resolveId(id: string): string | null {
+    if (id.startsWith('@hev/')) {
+      const parts = id.split('/')
+      const dir = hevDirs.get(`${parts[0] ?? ''}/${parts[1] ?? ''}`)
+      if (dir === undefined) return null
+      const sub = parts.slice(2).join('/')
+      if (sub === '') return join(dir, 'src', 'index.ts')
+      const direct = join(dir, 'src', `${sub}.ts`)
+      return existsSync(direct) ? direct : join(dir, 'src', sub, 'index.ts')
+    }
     if (!id.startsWith('@deepseek-ai/')) return null
     const parts = id.split('/')
     const dir = dirs.get(`${parts[0] ?? ''}/${parts[1] ?? ''}`)
@@ -64,5 +77,5 @@ export default {
   cacheDir: '/tmp/hev-vite-cache',
   plugins: [dshSource, standardDecoratorPlugin()],
   server: { fs: { allow: [here, DSH] } },
-  test: { include: ['tests/**/*.spec.ts'], environment: 'node' as const },
+  test: { include: ['packages/*/tests/**/*.spec.ts'], environment: 'node' as const },
 }

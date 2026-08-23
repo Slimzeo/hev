@@ -1,0 +1,8 @@
+packages:
+  - packages/*
+
+linkWorkspacePackages: true
+
+peerDependencyRules:
+  allowedVersions:
+    typescript: '>=5 <7'

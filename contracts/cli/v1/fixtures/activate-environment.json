@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "code": 200,
+  "message": "environment snapshot resolved",
+  "prompt": "",
+  "data": {
+    "snapshot": {
+      "environments": [
+        {
+          "id": "env_coding",
+          "name": "coding",
+          "revision": 2,
+          "skills": [
+            {
+              "skillKey": "code-review",
+              "policy": {
+                "kind": "auto"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

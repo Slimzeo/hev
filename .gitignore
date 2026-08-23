@@ -3,3 +3,5 @@
 
 # Local JavaScript dependencies and development symlinks
 node_modules
+lib/
+*.tsbuildinfo

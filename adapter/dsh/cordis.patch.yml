@@ -1,0 +1,10 @@
+- id: skill
+  name: '@deepseek-ai/dsh-skill'
+  disabled: true
+
+- insert:
+    - id: hev-runtime
+      name: '@hev/dsh-runtime'
+
+    - id: hev-skill
+      name: '@hev/dsh-skill'

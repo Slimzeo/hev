@@ -1,0 +1,19 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "lib/types"
+  },
+  "include": ["src"],
+  "references": [
+    { "path": "../../../../../deepseek-harness/vendor/cosmokit" },
+    { "path": "../../../../../deepseek-harness/vendor/schemastery" },
+    { "path": "../../../../../deepseek-harness/vendor/cordis" },
+    { "path": "../../../../../deepseek-harness/packages/util/brand" },
+    { "path": "../../../../../deepseek-harness/packages/util/native-command" },
+    { "path": "../../../../../deepseek-harness/packages/core/scope" },
+    { "path": "../../../../../deepseek-harness/packages/core/session" },
+    { "path": "../../../../../deepseek-harness/packages/core/agent" },
+    { "path": "../../../../../deepseek-harness/packages/interaction/commands" }
+  ]
+}
