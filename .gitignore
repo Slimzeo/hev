@@ -1,2 +1,5 @@
 # @byted-motor/aicoding-telemetry: git-hook run log (do not commit)
 .motor-code/log/
+
+# Local JavaScript dependencies and development symlinks
+node_modules
