@@ -40,7 +40,8 @@ interface RuntimeDependencies {
 }
 
 const DEFAULT_EXECUTABLE = 'hev'
-const USAGE = 'usage: /hev env create <name> | skill add <skill-key> --env <name> [--env <name>...] [--policy auto|off] | env activate <id-or-name> [id-or-name...]'
+const BASE_ENVIRONMENT = Object.freeze(['base'] as const)
+const USAGE = 'usage: /hev env create <name> | skill add <skill-key> --env <name> [--env <name>...] [--policy auto|off] | env use <id-or-name> [id-or-name...]'
 
 /** Owns live Environment selection and the optional `/hev` command. */
 export class EnvironmentController extends Service {
@@ -48,7 +49,7 @@ export class EnvironmentController extends Service {
     executable: z.string().default(DEFAULT_EXECUTABLE),
   })
 
-  private readonly active = new WeakMap<Session, readonly EnvironmentId[]>()
+  private readonly environmentIdsBySession = new WeakMap<Session, readonly EnvironmentId[]>()
   private readonly cli: HevCliClient
 
   /**
@@ -67,7 +68,7 @@ export class EnvironmentController extends Service {
       commandCtx.commands.register({
         name: 'hev',
         description: 'Manage HEV skill environments',
-        input: { hint: 'env create | skill add | env activate' },
+        input: { hint: 'env create | skill add | env use' },
         handler: async ({ agent, rawInput, signal }) => {
           try {
             return await this.executeCommand(agent, splitWords(rawInput), signal)
@@ -83,15 +84,18 @@ export class EnvironmentController extends Service {
    * Resolve the latest snapshot for one exact live Session.
    * @param session - exact in-process Session identity.
    * @param signal - optional operation cancellation signal.
-   * @returns latest snapshot, or `undefined` when this Session has no selection.
+   * @returns latest snapshot for the Session's explicit selection, or the default `base` Environment.
    */
   async current(
     session: Session,
     signal?: AbortSignal,
-  ): Promise<ResolvedEnvironmentSnapshot | undefined> {
-    const environmentIds = this.active.get(session)
-    if (environmentIds === undefined) return undefined
-    return await this.cli.activate(environmentIds, signal ?? new AbortController().signal)
+  ): Promise<ResolvedEnvironmentSnapshot> {
+    const operationSignal = signal ?? new AbortController().signal
+    const environmentIds = this.environmentIdsBySession.get(session) ?? BASE_ENVIRONMENT
+    const snapshot = await this.cli.use(environmentIds, operationSignal)
+    const canonicalIds = Object.freeze(snapshot.environments.map(environment => environment.id))
+    this.environmentIdsBySession.set(session, canonicalIds)
+    return snapshot
   }
 
   /**
@@ -101,15 +105,15 @@ export class EnvironmentController extends Service {
    * @param signal - optional operation cancellation signal.
    * @returns the committed latest snapshot.
    */
-  async activate(
+  async use(
     agent: Agent,
     environmentRefs: readonly string[],
     signal?: AbortSignal,
   ): Promise<ResolvedEnvironmentSnapshot> {
     const operationSignal = signal ?? new AbortController().signal
-    const snapshot = await this.cli.activate(environmentRefs, operationSignal)
+    const snapshot = await this.cli.use(environmentRefs, operationSignal)
     const canonicalIds = Object.freeze(snapshot.environments.map(environment => environment.id))
-    this.active.set(agent.session, canonicalIds)
+    this.environmentIdsBySession.set(agent.session, canonicalIds)
     return snapshot
   }
 
@@ -118,12 +122,12 @@ export class EnvironmentController extends Service {
     words: readonly string[],
     signal: AbortSignal,
   ): Promise<{ kind: 'success'; text?: string } | { kind: 'error'; text: string }> {
-    if (words[0] === 'env' && words[1] === 'activate') {
+    if (words[0] === 'env' && words[1] === 'use') {
       const environmentRefs = words.slice(2)
       if (environmentRefs.length === 0 || environmentRefs.some(reference => reference.startsWith('-'))) {
         return { kind: 'error', text: USAGE }
       }
-      const snapshot = await this.activate(agent, environmentRefs, signal)
+      const snapshot = await this.use(agent, environmentRefs, signal)
       return {
         kind: 'success',
         text: snapshot.environments

@@ -41,7 +41,7 @@ function snapshot(skills: Array<{ skillKey: string; kind: 'auto' | 'off' }>): Re
 }
 
 async function world(
-  current: (session: Session, signal?: AbortSignal) => Promise<ResolvedEnvironmentSnapshot | undefined>,
+  current: (session: Session, signal?: AbortSignal) => Promise<ResolvedEnvironmentSnapshot>,
 ) {
   const ctx = new Context()
   await ctx.plugin(AgentRegistry)
@@ -60,14 +60,15 @@ async function world(
 }
 
 describe('@hev/dsh-skill', () => {
-  it('keeps native views without a selection and filters all reads for a selected Agent', async () => {
+  it('keeps native views without an exact Agent and filters all reads through the current Environment snapshot', async () => {
     const active = sessionAgent('active')
     const inactive = sessionAgent('inactive')
+    const base = snapshot([])
     let selected = snapshot([
       { skillKey: 'allowed-skill', kind: 'auto' },
       { skillKey: 'off-skill', kind: 'off' },
     ])
-    const { ctx, current } = await world(async session => session === active.session ? selected : undefined)
+    const { ctx, current } = await world(async session => session === active.session ? selected : base)
     ctx.agents.register(active)
     ctx.agents.register(inactive)
 
@@ -76,11 +77,9 @@ describe('@hev/dsh-skill', () => {
       'allowed-skill',
       'off-skill',
     ])
-    expect((await ctx.skills.list({ scope: inactive })).map(skill => skill.name)).toEqual([
-      'absent-skill',
-      'allowed-skill',
-      'off-skill',
-    ])
+    expect((await ctx.skills.list({ scope: inactive })).map(skill => skill.name)).toEqual([])
+
+    expect((await ctx.skills.snapshot({ scope: inactive })).skills).toEqual([])
 
     const signal = new AbortController().signal
     const view = { scope: active, signal }
@@ -95,7 +94,7 @@ describe('@hev/dsh-skill', () => {
     expect(current).toHaveBeenLastCalledWith(active.session, signal)
   })
 
-  it('does not infer an Agent from an arbitrary scope object', async () => {
+  it('still keeps native views without a registered exact Agent scope', async () => {
     const { ctx, current } = await world(async () => snapshot([{ skillKey: 'allowed-skill', kind: 'auto' }]))
 
     expect((await ctx.skills.list({ scope: {} })).map(skill => skill.name)).toEqual([

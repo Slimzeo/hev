@@ -29,7 +29,7 @@ export class HevSkillRegistry extends SkillRegistry {
   /**
    * Return native winners visible in the calling Agent's current Environment.
    * @param options - native lookup options; an exact live Agent may be supplied as the scope.
-   * @returns the filtered catalog, or the native catalog when no Environment is selected.
+   * @returns the filtered catalog, or the native catalog when no exact live Agent is supplied.
    */
   override async snapshot(options: SkillViewOptions = {}): Promise<SkillCatalogSnapshot> {
     const catalog = await super.snapshot(options)
@@ -59,7 +59,7 @@ export class HevSkillRegistry extends SkillRegistry {
       : this.ctx.agents.list().find(candidate => candidate === options.scope)
     if (agent === undefined) return undefined
     const snapshot = await this.ctx.environment.current(agent.session, options.signal)
-    return snapshot === undefined ? undefined : autoSkillNames(snapshot)
+    return autoSkillNames(snapshot)
   }
 }
 

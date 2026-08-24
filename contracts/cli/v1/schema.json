@@ -5,7 +5,7 @@
   "oneOf": [
     { "$ref": "#/$defs/createEnvironmentResponse" },
     { "$ref": "#/$defs/addEnvironmentSkillResponse" },
-    { "$ref": "#/$defs/activateEnvironmentResponse" },
+    { "$ref": "#/$defs/useEnvironmentResponse" },
     { "$ref": "#/$defs/errorResponse" }
   ],
   "$defs": {
@@ -93,7 +93,7 @@
         }
       }
     },
-    "activateEnvironmentResponse": {
+    "useEnvironmentResponse": {
       "$ref": "#/$defs/successBase",
       "unevaluatedProperties": false,
       "properties": {

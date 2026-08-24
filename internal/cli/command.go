@@ -57,7 +57,7 @@ func NewRootCommand(service *application.EnvironmentService) *cobra.Command {
 
 	environment := &cobra.Command{Use: "env", Short: "Manage environments"}
 	environment.AddCommand(newCreateEnvironmentCommand(service))
-	environment.AddCommand(newActivateEnvironmentCommand(service))
+	environment.AddCommand(newUseEnvironmentCommand(service))
 
 	skill := &cobra.Command{Use: "skill", Short: "Manage environment skill bindings"}
 	skill.AddCommand(newAddSkillCommand(service))
@@ -144,13 +144,13 @@ func newAddSkillCommand(service *application.EnvironmentService) *cobra.Command 
 	return command
 }
 
-type activateEnvironmentData struct {
+type useEnvironmentData struct {
 	Snapshot domain.ResolvedEnvironmentSnapshot `json:"snapshot"`
 }
 
-func newActivateEnvironmentCommand(service *application.EnvironmentService) *cobra.Command {
+func newUseEnvironmentCommand(service *application.EnvironmentService) *cobra.Command {
 	return &cobra.Command{
-		Use:   "activate <env-id-or-name> [env-id-or-name...]",
+		Use:   "use <env-id-or-name> [env-id-or-name...]",
 		Short: "Resolve the latest environment snapshot",
 		Args:  minimumArgs(1),
 		RunE: func(command *cobra.Command, args []string) error {
@@ -162,7 +162,7 @@ func newActivateEnvironmentCommand(service *application.EnvironmentService) *cob
 				return err
 			}
 			if isJSONOutput(command) {
-				return writeSuccess(command.OutOrStdout(), "environment snapshot resolved", activateEnvironmentData{Snapshot: snapshot})
+				return writeSuccess(command.OutOrStdout(), "environment snapshot resolved", useEnvironmentData{Snapshot: snapshot})
 			}
 			for _, environment := range snapshot.Environments {
 				if _, err := fmt.Fprintf(command.OutOrStdout(), "%s@%d\n", environment.Name, environment.Revision); err != nil {

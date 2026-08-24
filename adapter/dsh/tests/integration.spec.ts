@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { tmpdir } from 'node:os'
 import { promisify } from 'node:util'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -57,11 +57,14 @@ function agent(id: string): Agent {
 }
 
 describe('HEV DSH bundle', () => {
-  it('runs create, add, and activate through the real Go CLI and filters the native Registry', { timeout: 120_000 }, async () => {
+  it('runs the real Go CLI, persists base by default, and keeps exact Session filtering isolated', { timeout: 120_000 }, async () => {
     temporaryRoot = await mkdtemp(join(tmpdir(), 'hev-dsh-'))
     const home = join(temporaryRoot, 'home')
     const executable = join(temporaryRoot, 'hev')
-    await execFileAsync('go', ['build', '-o', executable, './cmd/hev'], { cwd: hevRoot })
+    await execFileAsync('go', ['build', '-o', executable, './cmd/hev'], {
+      cwd: hevRoot,
+      env: { ...process.env, GOCACHE: '/private/tmp/hev-go-cache' },
+    })
     vi.stubEnv('HOME', home)
 
     const warnings: string[] = []
@@ -121,21 +124,45 @@ describe('HEV DSH bundle', () => {
       })
     }
     const owner = agent('hev-integration')
+    const other = agent('hev-other')
     ctx.agents.register(owner)
+    ctx.agents.register(other)
+
+    const view = { scope: owner, signal }
+    const otherView = { scope: other, signal }
+    expect((await ctx.skills.list(view)).map(skill => skill.name)).toEqual([])
+    expect((await ctx.skills.list(otherView)).map(skill => skill.name)).toEqual([])
+    const store = JSON.parse(await readFile(join(home, '.hev', 'environments.json'), 'utf8')) as {
+      schemaVersion: number
+      environments: Array<{ id: string; name: string }>
+    }
+    expect(store.schemaVersion).toBe(1)
+    expect(store.environments.map(environment => environment.name)).toContain('base')
+    expect(store.environments.find(environment => environment.name === 'base')).toMatchObject({
+      id: 'env_base',
+      name: 'base',
+    })
 
     await expect(ctx.commands.execute(owner, '/hev env create coding', [], signal))
       .resolves.toMatchObject({ result: { kind: 'success' } })
     await expect(ctx.commands.execute(
-      owner, '/hev skill add allowed-skill --env coding --policy auto', [], signal,
+      owner,
+      '/hev skill add allowed-skill --env coding --policy auto',
+      [],
+      signal,
     )).resolves.toMatchObject({ result: { kind: 'success' } })
     await expect(ctx.commands.execute(
-      owner, '/hev skill add off-skill --env coding --policy off', [], signal,
+      owner,
+      '/hev skill add off-skill --env coding --policy off',
+      [],
+      signal,
     )).resolves.toMatchObject({ result: { kind: 'success' } })
-    await expect(ctx.commands.execute(owner, '/hev env activate coding', [], signal))
+
+    await expect(ctx.commands.execute(owner, '/hev env use coding', [], signal))
       .resolves.toMatchObject({ result: { kind: 'success' } })
 
-    const view = { scope: owner, signal }
     expect((await ctx.skills.list(view)).map(skill => skill.name)).toEqual(['allowed-skill'])
+    expect((await ctx.skills.list(otherView)).map(skill => skill.name)).toEqual([])
     expect(await ctx.skills.get('allowed-skill', view)).toMatchObject({ name: 'allowed-skill' })
     expect(await ctx.skills.get('off-skill', view)).toBeUndefined()
     expect(await ctx.skills.get('outside-skill', view)).toBeUndefined()

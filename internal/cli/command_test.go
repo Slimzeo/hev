@@ -54,15 +54,15 @@ func TestJSONCommandChain(t *testing.T) {
 		t.Fatalf("add message = %q", added.Message)
 	}
 
-	activated := runJSONCommand(t, service, "env", "activate", "coding", "--output", "json")
-	var activateData struct {
+	used := runJSONCommand(t, service, "env", "use", "coding", "--output", "json")
+	var useData struct {
 		Snapshot domain.ResolvedEnvironmentSnapshot `json:"snapshot"`
 	}
-	decodeData(t, activated, &activateData)
-	if len(activateData.Snapshot.Environments) != 1 {
-		t.Fatalf("resolved environments = %#v", activateData.Snapshot.Environments)
+	decodeData(t, used, &useData)
+	if len(useData.Snapshot.Environments) != 1 {
+		t.Fatalf("resolved environments = %#v", useData.Snapshot.Environments)
 	}
-	environment := activateData.Snapshot.Environments[0]
+	environment := useData.Snapshot.Environments[0]
 	if environment.Revision != 2 {
 		t.Fatalf("revision = %d, want 2", environment.Revision)
 	}
@@ -77,7 +77,7 @@ func TestJSONFailureUsesStableEnvelope(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 
-	exitCode := Execute(context.Background(), service, &stdout, &stderr, []string{"env", "activate", "missing", "--output", "json"})
+	exitCode := Execute(context.Background(), service, &stdout, &stderr, []string{"env", "use", "missing", "--output", "json"})
 	if exitCode != 1 {
 		t.Fatalf("exit code = %d, want 1", exitCode)
 	}
@@ -110,8 +110,8 @@ func TestJSONCommandOutputsMatchContract(t *testing.T) {
 	}{
 		{args: []string{"env", "create", "coding", "--output", "json"}, wantSuccess: true},
 		{args: []string{"skill", "add", "code-review", "--env", "coding", "--output", "json"}, wantSuccess: true},
-		{args: []string{"env", "activate", "coding", "--output", "json"}, wantSuccess: true},
-		{args: []string{"env", "activate", "missing", "--output", "json"}},
+		{args: []string{"env", "use", "coding", "--output", "json"}, wantSuccess: true},
+		{args: []string{"env", "use", "missing", "--output", "json"}},
 		{args: []string{"env", "create", "--output", "json"}},
 		{args: []string{"skill", "add", "code-review", "--env", "coding", "--policy", "always", "--output", "json"}},
 		{args: []string{"unknown", "--output", "json"}},

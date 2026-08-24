@@ -1,7 +1,7 @@
 # `@hev/dsh-skill`
 
-`@hev/dsh-skill` replaces the DSH `skill` service while inheriting its native `SkillRegistry` implementation. Provider registration, scope merging, ranking, discovery caching, validation, and Skill loading remain owned by `@deepseek-ai/dsh-skill`.
+`@hev/dsh-skill` replaces the DSH `skill` service while inheriting its native `SkillRegistry` implementation. Provider registration, scope merging, ranking, validation, and Skill loading remain owned by `@deepseek-ai/dsh-skill`.
 
-The replacement changes only Registry reads. When `SkillViewOptions.scope` is an exact live Agent with an Environment selected through `@hev/dsh-runtime`, `list()`, `snapshot()`, and `get()` expose only Environment entries whose policy is `auto`. `off` and absent Skills are hidden. Reads without an exact live Agent or without a selected Environment keep the native DSH result.
+The replacement changes only Registry reads. When `SkillViewOptions.scope` is an exact live Agent, `list()`, `snapshot()`, and `get()` expose only native winners whose HEV entry has policy `auto`; `off`, unlisted, and configured-but-missing native Skills are hidden. A Session without an explicit `use` reads the empty `base` Environment. Only reads without an exact registered live Agent scope keep the native DSH result. Missing native Skills do not make `use` fail.
 
-Each filtered read asks `ctx.environment.current()` for the latest Environment records. The package does not cache a filtered catalog, create another provider, copy Skill bodies, or modify DeepSeek Harness source.
+Each filtered read asks `ctx.environment.current()` for the latest Environment records. The package does not create another provider, copy Skill bodies, or modify DeepSeek Harness source.

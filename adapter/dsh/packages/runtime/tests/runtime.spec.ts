@@ -57,7 +57,7 @@ async function world(runner: NativeCommandRunner) {
 }
 
 describe('@hev/dsh-runtime', () => {
-  it('uses exact activation argv, stores canonical IDs, and rereads current revisions', async () => {
+  it('uses exact use argv, stores canonical IDs, and rereads current revisions', async () => {
     let revision = 2
     const runner = vi.fn<NativeCommandRunner>(async () => ({
       stdout: response([environment('env_canonical', revision)]),
@@ -68,20 +68,20 @@ describe('@hev/dsh-runtime', () => {
       version: 0, id: SessionId('one'), createdAt: 0, cwd: '/workspace/one',
     })
     const owner = agent(session)
-    const activated = await runtime.activate(owner, ['coding'], signal)
-    expect(activated.environments[0]?.revision).toBe(2)
+    const selected = await runtime.use(owner, ['coding'], signal)
+    expect(selected.environments[0]?.revision).toBe(2)
     expect(runner).toHaveBeenNthCalledWith(1, 'hev-test', [
-      'env', 'activate', 'coding', '--output', 'json',
+      'env', 'use', 'coding', '--output', 'json',
     ], signal)
 
     revision = 3
-    expect((await runtime.current(session, signal))?.environments[0]?.revision).toBe(3)
+    expect((await runtime.current(session, signal)).environments[0]?.revision).toBe(3)
     expect(runner).toHaveBeenNthCalledWith(2, 'hev-test', [
-      'env', 'activate', 'env_canonical', '--output', 'json',
+      'env', 'use', 'env_canonical', '--output', 'json',
     ], signal)
   })
 
-  it('isolates exact Session objects', async () => {
+  it('defaults to base for an unselected Session and then isolates exact Session overrides', async () => {
     const runner = vi.fn<NativeCommandRunner>(async () => ({
       stdout: response([environment('env_1', 1, ['code-review'])]),
       stderr: '',
@@ -90,10 +90,21 @@ describe('@hev/dsh-runtime', () => {
     const selected = Session.create(SessionId('same'))
     const impostor = Session.create(SessionId('same'))
 
-    await runtime.activate(agent(selected), ['coding'], signal)
+    expect((await runtime.current(impostor, signal)).environments[0]?.id).toBe('env_1')
+    expect(runner).toHaveBeenNthCalledWith(1, 'hev-test', [
+      'env', 'use', 'base', '--output', 'json',
+    ], signal)
 
-    expect(await runtime.current(impostor, signal)).toBeUndefined()
-    expect(runner).toHaveBeenCalledTimes(1)
+    await runtime.use(agent(selected), ['coding'], signal)
+
+    expect((await runtime.current(selected, signal)).environments[0]?.id).toBe('env_1')
+    expect((await runtime.current(impostor, signal)).environments[0]?.id).toBe('env_1')
+    expect(runner.mock.calls.map(call => call[1])).toEqual([
+      ['env', 'use', 'base', '--output', 'json'],
+      ['env', 'use', 'coding', '--output', 'json'],
+      ['env', 'use', 'env_1', '--output', 'json'],
+      ['env', 'use', 'env_1', '--output', 'json'],
+    ])
   })
 
   it('preserves the previous IDs across structured and malformed CLI failures', async () => {
@@ -118,12 +129,12 @@ describe('@hev/dsh-runtime', () => {
     const { runtime } = await world(runner)
     const owner = agent(Session.create(SessionId('cli-rollback')))
 
-    await runtime.activate(owner, ['good'], signal)
-    await expect(runtime.activate(owner, ['missing'], signal)).rejects.toMatchObject({
+    await runtime.use(owner, ['good'], signal)
+    await expect(runtime.use(owner, ['missing'], signal)).rejects.toMatchObject({
       code: 'ENV_NOT_FOUND', prompt: 'create it',
     })
-    await expect(runtime.activate(owner, ['malformed'], signal)).rejects.toBeInstanceOf(HevCliError)
-    expect((await runtime.current(owner.session, signal))?.environments[0]?.revision).toBe(5)
+    await expect(runtime.use(owner, ['malformed'], signal)).rejects.toBeInstanceOf(HevCliError)
+    expect((await runtime.current(owner.session, signal)).environments[0]?.revision).toBe(5)
   })
 
   it('forwards the three supported /hev operations with fixed JSON argv', async () => {
@@ -163,13 +174,13 @@ describe('@hev/dsh-runtime', () => {
       [],
       signal,
     )).resolves.toMatchObject({ result: { kind: 'success', text: 'skill added to environment' } })
-    await expect(ctx.commands.execute(owner, '/hev env activate coding', [], signal))
+    await expect(ctx.commands.execute(owner, '/hev env use coding', [], signal))
       .resolves.toMatchObject({ result: { kind: 'success' } })
 
     expect(runner.mock.calls.map(call => call[1])).toEqual([
       ['env', 'create', 'coding', '--output', 'json'],
       ['skill', 'add', 'code-review', '--env', 'coding', '--policy', 'off', '--output', 'json'],
-      ['env', 'activate', 'coding', '--output', 'json'],
+      ['env', 'use', 'coding', '--output', 'json'],
     ])
 
     await fiber.dispose()
@@ -193,7 +204,7 @@ describe('@hev/dsh-runtime', () => {
     for (const envelope of invalid) {
       const runner: NativeCommandRunner = async () => ({ stdout: JSON.stringify(envelope), stderr: '' })
       const { runtime } = await world(runner)
-      await expect(runtime.activate(agent(Session.create(SessionId(crypto.randomUUID()))), ['coding'], signal))
+      await expect(runtime.use(agent(Session.create(SessionId(crypto.randomUUID()))), ['coding'], signal))
         .rejects.toMatchObject({ code: 'CLI_PROTOCOL' })
     }
   })

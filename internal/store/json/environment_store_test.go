@@ -75,13 +75,59 @@ func TestEnvironmentStoreCreateAndReload_BitsUT(t *testing.T) {
 	if persisted.SchemaVersion != 1 {
 		t.Errorf("schema version = %d, want 1", persisted.SchemaVersion)
 	}
-	wantNames := []string{"alpha", "beta"}
+	wantNames := []string{"alpha", "base", "beta"}
 	gotNames := make([]string, len(persisted.Environments))
 	for index, environment := range persisted.Environments {
 		gotNames[index] = environment.Name
 	}
 	if !reflect.DeepEqual(gotNames, wantNames) {
 		t.Fatalf("persisted environment order = %v, want %v", gotNames, wantNames)
+	}
+}
+
+func TestEnvironmentStoreInitializesAndPersistsBaseEnvironment_BitsUT(t *testing.T) {
+	tests := []struct {
+		name  string
+		setup func(string)
+	}{
+		{
+			name:  "missing file",
+			setup: func(string) {},
+		},
+		{
+			name: "empty environments array",
+			setup: func(path string) {
+				if err := os.WriteFile(path, []byte("{\"schemaVersion\":1,\"environments\":[]}\n"), 0o600); err != nil {
+					t.Fatalf("WriteFile returned error: %v", err)
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "environments.json")
+			tt.setup(path)
+			store := jsonstore.NewEnvironmentStore(path)
+
+			environment, err := getOne(t, store, "base")
+			if err != nil {
+				t.Fatalf("GetManyByIDOrName returned error: %v", err)
+			}
+			want := storeEnvironment("env_base", "base", 1)
+			if !reflect.DeepEqual(environment, want) {
+				t.Fatalf("base environment = %#v, want %#v", environment, want)
+			}
+
+			content := mustReadFile(t, path)
+			var persisted persistedStoreFile
+			if err := json.Unmarshal(content, &persisted); err != nil {
+				t.Fatalf("persisted JSON is invalid: %v", err)
+			}
+			if !reflect.DeepEqual(persisted.Environments, []domain.Environment{want}) {
+				t.Fatalf("persisted environments = %#v, want %#v", persisted.Environments, []domain.Environment{want})
+			}
+		})
 	}
 }
 
@@ -317,6 +363,7 @@ func TestEnvironmentStoreRejectsInvalidPersistedData_BitsUT(t *testing.T) {
 		content       string
 		wantErrorPart string
 	}{
+		{name: "empty file", content: "", wantErrorPart: "get environments: decode store"},
 		{name: "malformed json", content: "{", wantErrorPart: "get environments: decode store"},
 		{name: "unsupported schema", content: `{"schemaVersion":2,"environments":[]}`, wantErrorPart: "unsupported store schema version: 2"},
 		{name: "missing environments array", content: `{"schemaVersion":1}`, wantErrorPart: "decode store: environments must be an array"},

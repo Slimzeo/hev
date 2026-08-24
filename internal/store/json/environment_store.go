@@ -20,6 +20,13 @@ import (
 
 const schemaVersion = 1
 
+var baseEnvironment = domain.Environment{
+	ID:       "env_base",
+	Name:     "base",
+	Revision: 1,
+	Skills:   []domain.EnvironmentSkillSpec{},
+}
+
 // EnvironmentStore persists the current Environment records in one JSON file.
 type EnvironmentStore struct {
 	path string
@@ -163,65 +170,72 @@ func (s *EnvironmentStore) withLockedFile(
 		}
 	}()
 
-	file, err := s.readFile()
+	file, initialized, err := s.readFile()
 	if err != nil {
 		return err
 	}
 	if err := operation(&file); err != nil {
 		return err
 	}
-	if !write {
+	if !write && !initialized {
 		return nil
 	}
 	return s.writeFile(file)
 }
 
-func (s *EnvironmentStore) readFile() (storeFile, error) {
+func (s *EnvironmentStore) readFile() (storeFile, bool, error) {
 	content, err := os.ReadFile(s.path)
 	if errors.Is(err, fs.ErrNotExist) {
-		return storeFile{SchemaVersion: schemaVersion, Environments: []domain.Environment{}}, nil
+		return storeFile{
+			SchemaVersion: schemaVersion,
+			Environments:  []domain.Environment{domain.CloneEnvironment(baseEnvironment)},
+		}, true, nil
 	}
 	if err != nil {
-		return storeFile{}, fmt.Errorf("read store: %w", err)
+		return storeFile{}, false, fmt.Errorf("read store: %w", err)
 	}
-
 	var file storeFile
 	decoder := json.NewDecoder(bytes.NewReader(content))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&file); err != nil {
-		return storeFile{}, fmt.Errorf("decode store: %w", err)
+		return storeFile{}, false, fmt.Errorf("decode store: %w", err)
 	}
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		return storeFile{}, errors.New("decode store: expected exactly one JSON object")
+		return storeFile{}, false, errors.New("decode store: expected exactly one JSON object")
 	}
 	if file.SchemaVersion != schemaVersion {
-		return storeFile{}, fmt.Errorf("unsupported store schema version: %d", file.SchemaVersion)
+		return storeFile{}, false, fmt.Errorf("unsupported store schema version: %d", file.SchemaVersion)
 	}
 	if file.Environments == nil {
-		return storeFile{}, errors.New("decode store: environments must be an array")
+		return storeFile{}, false, errors.New("decode store: environments must be an array")
 	}
 	seenIDs := make(map[domain.EnvironmentID]struct{}, len(file.Environments))
 	seenNames := make(map[string]struct{}, len(file.Environments))
 	for _, environment := range file.Environments {
 		if err := environment.Validate(); err != nil {
-			return storeFile{}, fmt.Errorf("invalid stored environment: %w", err)
+			return storeFile{}, false, fmt.Errorf("invalid stored environment: %w", err)
 		}
 		if _, exists := seenIDs[environment.ID]; exists {
-			return storeFile{}, fmt.Errorf("invalid store: duplicate environment id %q", environment.ID)
+			return storeFile{}, false, fmt.Errorf("invalid store: duplicate environment id %q", environment.ID)
 		}
 		if _, exists := seenNames[environment.Name]; exists {
-			return storeFile{}, fmt.Errorf("invalid store: duplicate environment name %q", environment.Name)
+			return storeFile{}, false, fmt.Errorf("invalid store: duplicate environment name %q", environment.Name)
 		}
 		if _, exists := seenNames[string(environment.ID)]; exists {
-			return storeFile{}, fmt.Errorf("invalid store: environment id %q conflicts with an environment name", environment.ID)
+			return storeFile{}, false, fmt.Errorf("invalid store: environment id %q conflicts with an environment name", environment.ID)
 		}
 		if _, exists := seenIDs[domain.EnvironmentID(environment.Name)]; exists {
-			return storeFile{}, fmt.Errorf("invalid store: environment name %q conflicts with an environment id", environment.Name)
+			return storeFile{}, false, fmt.Errorf("invalid store: environment name %q conflicts with an environment id", environment.Name)
 		}
 		seenIDs[environment.ID] = struct{}{}
 		seenNames[environment.Name] = struct{}{}
 	}
-	return file, nil
+	initialized := false
+	if len(file.Environments) == 0 {
+		file.Environments = []domain.Environment{domain.CloneEnvironment(baseEnvironment)}
+		initialized = true
+	}
+	return file, initialized, nil
 }
 
 func (s *EnvironmentStore) writeFile(file storeFile) error {

@@ -2,139 +2,159 @@
 
 (不是很规范，仅作为建议advice)
 
-> 依据 DeepSeek Harness `0.1.1-rc.2`（源码提交 `b150a55`）。DSH 仍处于 Developer Preview，升级可能包含破坏性变更。
+> 依据 DeepSeek Harness `0.1.0-rc.8`（源码提交 `141eb6f`）。DSH 仍处于 Developer Preview，升级可能包含破坏性变更。
 
 ## 方案定位
 
-HEV 在 DSH Host 层实现两个 Cordis 插件：
+HEV Core 是独立 Go CLI，通过 `$HOME/.hev/environments.json` 持久化 Environment 当前记录。DSH Adapter 由两个 Cordis 运行时插件和一个安装 bundle 组成：
 
-1. **`@hev/dsh-plugin`**：HEV 主插件，包含原计划中 Go CLI 与 adapter 的全部能力，包括领域模型、JSON 持久化、Environment/Skill 管理、SessionBinding 和 `/hev` 命令。
-2. **`@hev/dsh-skill`**：基于官方 `@deepseek-ai/dsh-skill` 修改的替代实现，继续提供 `ctx.skills`，但根据当前 Session/Agent 绑定的 Environment 过滤可见 Skill。
+1. **`@hev/dsh-runtime`**：通过无 shell 子进程调用 HEV CLI，提供 `ctx.environment`，并在 `@deepseek-ai/dsh-commands` 存在时注册 `/hev`。
+2. **`@hev/dsh-skill`**：继承官方 `@deepseek-ai/dsh-skill` 的 `SkillRegistry`，继续提供 `ctx.skills`，并按精确 live Agent/Session 的当前 Environment 过滤原生 Skill winner。
+3. **`@hev/dsh-adapter`**：只声明 bundle 和 workspace 依赖，不是第三个运行时插件。
 
-不再存在独立 Go CLI、子进程调用或 CLI/Plugin JSON IPC 契约。
-
-建议依赖方向保持单向：
+依赖方向保持单向：
 
 ```text
-@hev/dsh-plugin（提供 ctx.hev）
-             ↓ inject: ['hev']
+HEV Go CLI + JSON Store
+          ↑ subprocess JSON v1
+@hev/dsh-runtime（提供 ctx.environment 与 /hev）
+          ↑ inject: ['agents', 'environment']
 @hev/dsh-skill（提供兼容的 ctx.skills）
-             ↓
+          ↑
 官方 skill-filesystem / tool-skill 等消费者
 ```
 
-HEV 主插件不应反向依赖 `ctx.skills`。Environment 变更通过 `ctx.hev` 或类型化事件通知替代 Skill Registry 清理缓存并发出 `skills/change`，避免循环依赖。
-
 ## 开发规范
 
-### HEV 主插件
+### `@hev/dsh-runtime`
 
-- 建议使用 `Service` 插件提供稳定的 `ctx.hev`，并用 TypeScript 声明合并补充 Context 类型。
-- 内部直接实现 Environment、Skill、SessionBinding、Repository 和应用服务；持久化目录默认使用 `~/.hev`，可通过 Config schema 配置。
-- 通过 `ctx.commands.register()` 注册 `/hev`。它是人类命令，不应注册成模型工具；命令名必须匹配 `[a-z][a-z0-9_-]*`。
-- SessionBinding 以稳定的 `SessionId` 为键；未绑定时返回 `base` Environment。恢复同一 Session 时直接读取绑定，不依赖进程内“当前环境”。
-- 同一 Session 的 activate/deactivate/update 必须串行化；校验、持久化和内存发布应保持原子性，失败时保留旧绑定。
-- JSON 存储保留 `schemaVersion`；新增可选字段可保持版本，删除字段、改变类型或语义必须升级版本并提供迁移。
-- 所有可部署参数通过 Schemastery `Config` 声明；非法配置在加载阶段失败。
+- 使用 `Service` 插件提供 `ctx.environment`，并用 TypeScript 声明合并补充 Context 类型。
+- `executable` 是唯一配置项，默认值为 `hev`；通过 argv 直接调用，不经过 shell。
+- 通过 `ctx.commands.register()` 注册 `/hev`。它是人类命令，不注册成模型工具。
+- MVP 只公开 `env create`、`skill add` 和 `env use`；Plugin 固定追加 `--output json`，先校验 JSON v1 envelope 和完整结果，再使用返回数据。
+- `use(agent, refs)` 以精确 live `agent.session` 对象为键保存 CLI 返回的规范 Environment ID。失败不得替换原选择。
+- `current(session)` 对未显式 `use` 的 Session 执行 `hev env use base --output json`；对已选择的 Session 使用保存的规范 ID。每次调用都读取最新 Store 记录，并将返回的规范 ID 写回同一个 Session。
+- 选择只保存在进程内 `WeakMap<Session, readonly EnvironmentId[]>`，不同 `Session` 对象即使 ID 相同也互不共享。
 
-### 替代 `dsh-skill` 插件
+### `@hev/dsh-skill`
 
 - 必须继续注册同一个 Cordis 服务键 `ctx.skills`，不得另建平行 Skill Registry。
-- 应尽量从官方实现 fork，并保持以下公开契约兼容：
-  - `registerProvider()`、`register()`、`snapshot()`、`list()`、`get()`；
-  - `skills/change` 事件；
-  - provider 的 `list/get`、locator、rank、缓存、失效和 disposer 行为；
-  - `SkillSummary`、`SkillDefinition`、`SkillInvocationPolicy` 语义。
-- 过滤依据必须来自每次调用的 `SkillViewOptions.scope` 所对应的 Agent/Session，不得使用进程级全局 active environment。
-- `snapshot/list/get` 必须应用同一套过滤规则；禁止出现“目录不可见但按名称仍可 get”的绕过。
-- 保留官方 scope 合并和同名裁决规则，再应用 HEV Environment 过滤；不要破坏 agent scope 对全局层的遮蔽关系。
-- Skill 名继续使用 kebab-case。模型和用户入口仍分别遵守 `modelInvocable`、`userInvocable`，`get()` 本身不替消费方做权限判断。
-- Environment 或 Skill 关联改变后，应使相关缓存失效并发出 `skills/change`，使 `tool-skill` 更新模型可见目录。
-- `mode=off` 必须从目录和加载路径中排除；`auto/always/interval` 的自动执行属于 HEV 策略，不应混入基础 Skill Registry 的发现契约。
-- 需要定期对照上游 `@deepseek-ai/dsh-skill` 更新。官方 API、缓存、校验或 scope 语义变化时，替代实现必须同步并重新做兼容测试。
+- 继承官方实现，保留 provider 注册、scope 合并、同名 winner、校验和 Skill 正文加载。
+- 过滤依据来自每次调用的 `SkillViewOptions.scope`。只有与 `ctx.agents.list()` 中对象完全相同的 live Agent 才进入 HEV 过滤；找不到精确 Agent 时保留原生 view。
+- 精确 live Agent 即使未显式 `use`，也必须通过 `current()` 使用 `base`，不得回退到原生 view。
+- `snapshot()` 与 `get()` 使用同一 allow-set；父类 `list()` 动态调用 override 后的 `snapshot()`。
+- allow-set 只包含 current snapshot 中 `policy.kind === 'auto'` 的 `skillKey`。`off`、未列入以及没有原生 winner 的 key 均不可见。HEV CLI 不查询原生 Registry，因此缺少原生 Skill 不阻止 `use`。
 
-### 通用要求
+### JSON Store
 
-- 两者均为 ESM TypeScript Host 插件，导出明确的 `name`、`inject` 和入口。
-- 依赖通过 `inject` 表达，不依赖 `cordis.patch.yml` 行顺序。
-- 注册、监听器和子插件使用 Cordis effect 生命周期；watcher、timer、文件句柄等资源放入 `ctx.effect()` 并返回 disposer。
-- 异步读取应接受并及时响应 `AbortSignal`；卸载和 HMR 后不得保留旧 Session 状态或重复注册。
-- 当前为预览版本，DSH/Cordis peer dependency 应锁定已验证版本；升级后必须运行兼容测试。
-
-## Bundle 与接入
-
-建议使用一个可安装 Bundle 管理两个插件包：
-
-```text
-packages/
-├── dsh-plugin/       # @hev/dsh-plugin，同时声明 dsh.bundle
-└── dsh-skill/        # @hev/dsh-skill，普通依赖包
-```
-
-`@hev/dsh-plugin` 的 `package.json` 声明：
+首次读取缺失的 Store 文件，或读取到空的 `environments` 数组时，`JsonEnvironmentStore` 自动持久化：
 
 ```json
 {
-  "name": "@hev/dsh-plugin",
-  "version": "0.1.0",
-  "type": "module",
-  "main": "./lib/index.js",
-  "types": "./lib/types/index.d.ts",
-  "files": ["lib", "cordis.patch.yml"],
-  "dependencies": {
-    "@hev/dsh-skill": "0.1.0"
-  },
-  "dsh": {
-    "bundle": { "patch": "./cordis.patch.yml" }
-  }
+  "schemaVersion": 1,
+  "environments": [
+    {
+      "id": "env_base",
+      "name": "base",
+      "revision": 1,
+      "skills": []
+    }
+  ]
 }
 ```
 
-Bundle 的 `cordis.patch.yml` 同时插入 HEV 服务并替换官方 `skill` 行：
+`base` 是普通 Environment。`revision` 只记录当前记录的新旧：创建值为 `1`，每次成功更新递增；`use` 与 `current()` 始终读取最新记录，不按 revision 选择或回退。
+
+## Bundle 与接入
+
+根 `adapter/dsh/package.json` 声明 `@hev/dsh-adapter` bundle，并依赖两个运行时包。`cordis.patch.yml` 必须先禁用 base 中原生 Skill Registry，再插入 HEV 插件：
 
 ```yaml
-- insert:
-    - id: hev
-      name: '@hev/dsh-plugin'
-
 - id: skill
-  name: '@hev/dsh-skill'
+  name: '@deepseek-ai/dsh-skill'
+  disabled: true
+
+- insert:
+    - id: hev-runtime
+      name: '@hev/dsh-runtime'
+
+    - id: hev-skill
+      name: '@hev/dsh-skill'
 ```
 
-说明：
+`@hev/dsh-adapter` 不对应 Loader 行。`skill` 保留原包名并禁用，`hev-skill` 提供唯一启用的 `ctx.skills`；`hev-runtime` 在 `hev-skill` 前插入，且后者通过 `inject = ['agents', 'environment']` 声明依赖。
 
-- `hev` 是新插件实例 ID。
-- `skill` 必须沿用 dsh-base 中官方 Skill Registry 的实例 ID，才能覆盖 `@deepseek-ai/dsh-skill`，而不是并存两个 `ctx.skills` 提供方。
-- `@hev/dsh-skill` 在源码中声明 `inject = ['hev']`；即使配置行写在前面，Cordis 也会等待服务就绪。
-- 官方 `skill-filesystem`、`skill-badge` 和 `tool-skill` 行可以保留，它们继续通过兼容的 `ctx.skills` 工作。
+### 本地 checkout 接入
 
-安装并验证：
+在 HEV 根目录构建 CLI 与 Adapter：
 
 ```bash
-dsh plugin --profile web add @hev/dsh-plugin
-dsh --profile web --dump-config
-dsh --profile web
+mkdir -p .local/bin
+go build -o "$PWD/.local/bin/hev" ./cmd/hev
+pnpm --dir adapter/dsh install
+pnpm --dir adapter/dsh typecheck
+pnpm --dir adapter/dsh test
+pnpm --dir adapter/dsh build
 ```
 
-`--dump-config` 中应同时满足：存在 `id: hev`，且 `id: skill` 的 `name` 已变为 `@hev/dsh-skill`。
+DSH profile 无法仅从根 workspace link 解析两个子包。本地开发必须一次安装两个 plain dependency 和根 bundle，根 bundle 放在最后便于辨认：
 
-本地开发可安装 workspace/link 包，或用一个绝对路径 patch 同时指向两个构建入口；不要让开发 patch 同时保留官方 `id: skill` 实例。
+```bash
+cd <deepseek-harness-root>
+pnpm dsh plugin --profile web add \
+  /absolute/path/to/hev/adapter/dsh/packages/runtime \
+  /absolute/path/to/hev/adapter/dsh/packages/skill \
+  /absolute/path/to/hev/adapter/dsh
+```
+
+发布到 registry 后，安装 `@hev/dsh-adapter` 会通过其 dependencies 安装两个子包，无需分别添加。
+
+在 `$DSH_HOME/profiles/web/cordis.patch.yml` 设置 CLI 绝对路径（`$DSH_HOME` 默认是 `~/.dsh`）：
+
+```yaml
+- id: hev-runtime
+  config:
+    executable: /absolute/path/to/hev/.local/bin/hev
+```
+
+检查组合结果：
+
+```bash
+pnpm dsh --profile web --dump-config
+```
+
+输出必须包含禁用的 `id: skill` / `name: '@deepseek-ai/dsh-skill'`，以及启用的 `hev-runtime` 和 `hev-skill`。随后启动 Web profile：
+
+```bash
+pnpm dsh web --no-open
+```
+
+### 行为验证
+
+新建 Session 后，普通空 `base` 应使 Skill 列表为空。在同一 Session 中执行：
+
+```text
+/hev env create review
+/hev skill add <native-auto-skill> --env review --policy auto
+/hev skill add <native-off-skill> --env review --policy off
+/hev env use review
+```
+
+`<native-auto-skill>` 应可见且可加载，`<native-off-skill>` 应不可见。也可以加入一个不存在于原生 Registry 的 kebab-case key；它不会阻止 `/hev env use review`，但不会出现在结果中。
+
+再新建一个 Session：它仍默认使用空 `base`，不会继承第一个 Session 的 `review`；回到第一个 Session 时，`review` 的 auto/off 结果保持不变。
 
 ## 注意事项
 
-- Bundle 层只负责组装；两个插件都运行在 Node Host。配置优先级为 bundle → profile patch → `$DSH_HOME/cordis.patch.yml` → `--patch`，后层仍可再次覆盖 `id: skill`。
-- 按 `id` 修改插件行时，`config` 是整体替换而非深度合并；替换官方行时应检查上游是否新增必要配置。
-- `agent/session-start` 是同步通知，不能等待异步恢复。最佳方案是启动时预加载 HEV 存储，并让 Skill Registry 在每次带 scope 查询时按 SessionId 读取绑定；若恢复必须异步完成，则必须接入 Agent create/resume 的 `setup(agentCtx)` 事务。
-- 替换核心 Service Definition 的兼容风险高于普通 provider 插件。必须覆盖官方消费者 `dsh-skill-filesystem`、`dsh-tool-skill`、HMR 和多 Session 并发场景。
-- 插件运行在宿主进程且位于 agent 沙箱之外，应视为受信任代码。文件路径必须规范化，持久化应采用临时文件加原子替换，并防止并发写覆盖。
-- 最低测试范围：官方 `ctx.skills` API 契约、scope 隔离、list/get 一致性、base 默认环境、激活切换、缓存失效、Session 恢复、并发写、卸载/HMR，以及真实 profile 装配。
+- Bundle 层只负责组装；两个插件运行在 Node Host，HEV Core 运行在 CLI 子进程。
+- Profile patch 的 `config` 是整体替换，不是深度合并；覆盖 `hev-runtime` 时必须保留该行需要的全部配置。
+- 插件在 agent 沙箱之外运行，应把 `executable` 指向受信任的 HEV 二进制文件。
+- DSH/Cordis peer dependency 应锁定已验证版本；升级后重新运行 typecheck、package tests 和真实 profile 装配验证。
 
 ## 参考文档
 
-- [打包与安装插件](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/docs/user/develop/basic/publish.zh.md)
-- [Cordis 生命周期与 Effect](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/docs/cordis-tutorial/02-lifecycle-and-effects.zh.md)
-- [服务与依赖](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/docs/user/develop/framework/service.zh.md)
-- [官方 Skill Registry 契约](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/skill/skill/README.zh.md)
-- [官方 filesystem provider](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/skill/skill-filesystem/README.zh.md)
-- [命令注册表](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/interaction/commands/README.zh.md)
-- [Agent 生命周期与 setup](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/core/agent/README.zh.md)
+- [打包与安装插件](https://github.com/deepseek-ai/deepseek-harness/blob/141eb6fef83422698aef7a981029e843e8161534/docs/user/develop/basic/publish.zh.md)
+- [Cordis 生命周期与 Effect](https://github.com/deepseek-ai/deepseek-harness/blob/141eb6fef83422698aef7a981029e843e8161534/docs/cordis-tutorial/02-lifecycle-and-effects.zh.md)
+- [服务与依赖](https://github.com/deepseek-ai/deepseek-harness/blob/141eb6fef83422698aef7a981029e843e8161534/docs/user/develop/framework/service.zh.md)
+- [官方 Skill Registry 契约](https://github.com/deepseek-ai/deepseek-harness/blob/141eb6fef83422698aef7a981029e843e8161534/packages/skill/skill/README.zh.md)
+- [命令注册表](https://github.com/deepseek-ai/deepseek-harness/blob/141eb6fef83422698aef7a981029e843e8161534/packages/interaction/commands/README.zh.md)

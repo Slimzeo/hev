@@ -68,7 +68,7 @@ export class HevCliClient {
    * @param signal - operation cancellation signal.
    * @returns the latest validated snapshot.
    */
-  async activate(
+  async use(
     environmentRefs: readonly string[],
     signal: AbortSignal,
   ): Promise<ResolvedEnvironmentSnapshot> {
@@ -81,7 +81,7 @@ export class HevCliClient {
       || reference.startsWith('-'))) {
       throw new HevCliError('INVALID_ARGUMENT', 'environment references must be non-empty argv values without whitespace')
     }
-    const envelope = await this.invoke(['env', 'activate', ...environmentRefs, '--output', 'json'], signal)
+    const envelope = await this.invoke(['env', 'use', ...environmentRefs, '--output', 'json'], signal)
     const snapshot = record(envelope.data.snapshot, 'data.snapshot')
     const environments = array(snapshot.environments, 'data.snapshot.environments')
     if (environments.length === 0) protocol('data.snapshot.environments must not be empty')
