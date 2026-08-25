@@ -4,7 +4,7 @@
 
 - insert:
     - id: hev-runtime
-      name: '@hev/dsh-runtime'
+      name: '@slimzeo/hev-dsh-plugin/hev-runtime'
 
-    - id: hev-skill
-      name: '@hev/dsh-skill'
+    - id: hev-skill-registry
+      name: '@slimzeo/hev-dsh-plugin/hev-skill-registry'

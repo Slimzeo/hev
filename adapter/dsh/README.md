@@ -1,22 +1,45 @@
-# HEV DSH adapter
+# hev DSH plugin
 
-This workspace contains two Cordis plugins and one bundle manifest:
+`@slimzeo/hev-dsh-plugin` is the single installable hev bundle for DeepSeek Harness. It exposes two Cordis entries from one npm package:
 
-- `@hev/dsh-runtime` owns `/hev` and the live `Session` to Environment selection.
-- `@hev/dsh-skill` replaces the native `ctx.skills` implementation and filters native Skill winners by the selected Environment.
-- `@hev/dsh-adapter` is only the installation bundle that disables the native Skill Registry row and inserts the two HEV plugins.
+- `@slimzeo/hev-dsh-plugin/hev-runtime` owns `/hev` and the live `Session` to Environment selection.
+- `@slimzeo/hev-dsh-plugin/hev-skill-registry` replaces the native `ctx.skills` implementation and filters native Skill winners by the selected Environment.
+
+The package also includes the `hev` executable for supported macOS, Linux, and Windows targets. Users do not install Go or configure an executable path.
+
+## Source layout
+
+```text
+src/hev-runtime/index.ts          Cordis service entry, Session selection, and optional /hev command
+src/hev-runtime/environment.ts    Environment data and numeric status types
+src/hev-runtime/cli.ts            hev process invocation and CLI v2 response validation
+src/hev-runtime/executable.ts     package-local executable resolution
+src/hev-skill-registry/index.ts   native DSH Skill Registry replacement and Environment filtering
+tests/runtime.spec.ts             hev-runtime unit coverage
+tests/skill-registry.spec.ts      Registry filtering coverage
+tests/integration.spec.ts         Loader composition with the real Go CLI
+```
+
+The top-level source folders follow Cordis plugin ownership. Runtime helpers remain inside `hev-runtime`; `hev-skill-registry` stays separate because it replaces a different DSH service.
+
+## Quick start
+
+```bash
+npx @deepseek-ai/dsh plugin --profile web add @slimzeo/hev-dsh-plugin@latest
+npx @deepseek-ai/dsh web
+```
 
 The MVP supports exactly these commands:
 
 ```text
 /hev env create <name>
 /hev skill add <skill-key> --env <name> [--env <name>...] [--policy auto|off]
-/hev env use <id-or-name> [id-or-name...]
+/hev env use <id-or-name>
 ```
 
-Selection is process-local and keyed by the exact live DSH `Session` object. An exact live Session with no explicit `use` starts from the ordinary empty `base` Environment. The Go Store automatically persists that `env_base`, revision `1`, `skills: []` record when its file is missing or contains an empty `environments` array. The runtime stores canonical Environment IDs, then resolves them again on each Skill read so Environment changes use the latest current record.
+Selection is process-local and keyed by the exact live DSH `Session` object. Every live Session has exactly one current Environment. A Session with no explicit `use` starts from the ordinary empty `base` Environment. The Go Store automatically persists that `env_base`, revision `1`, `skills: []` record when its file is missing or contains an empty `environments` array. The runtime stores one canonical Environment ID, then resolves it again on each Skill read so Environment changes use the latest current record. `env use` never composes Environments; repeated `--env` on `skill add` remains valid because it mutates several Environment configurations without selecting them.
 
-`@hev/dsh-skill` keeps DSH provider discovery, winner selection, validation, and Skill loading unchanged. An exact live Agent sees only native winners whose key has `policy.kind === 'auto'` in its current Environment; `off` and unlisted keys are unavailable through `list()`, `snapshot()`, and `get()`. Only a read without an exact live Agent scope keeps the native view. A configured HEV key that has no native winner remains hidden but does not make `use` fail.
+The Skill Registry entry keeps DSH provider discovery, winner selection, validation, and Skill loading unchanged. An exact live Agent sees only native winners whose key has `policy.kind === 'auto'` in its current Environment; `off` and unlisted keys are unavailable through `list()`, `snapshot()`, and `get()`. Only a read without an exact live Agent scope keeps the native view. A configured hev key that has no native winner remains hidden but does not make `use` fail.
 
 ## Development
 
@@ -27,28 +50,21 @@ pnpm test
 pnpm build
 ```
 
-The integration test builds the real Go CLI in a temporary directory, boots the composed rows through the DSH Loader, and verifies the default `base`, `create -> add -> use -> filtered native SkillRegistry`, and exact-Session isolation.
+`pnpm build` compiles both Cordis subpaths and the supported hev binaries into the package. The integration test builds a temporary native hev executable, boots the composed rows through the DSH Loader, and verifies the default `base`, `create -> add -> use -> filtered native SkillRegistry`, and exact-Session isolation.
 
 ## Local DSH integration
 
-Build HEV and the adapter, then install this out-of-tree bundle into the DSH Web profile. Use absolute paths so the profile link and executable configuration do not depend on either checkout's working directory:
+Build the complete package, then add its one local path to the DSH Web profile:
 
 ```bash
 cd <hev-root>
-mkdir -p .local/bin
-go build -o "$PWD/.local/bin/hev" ./cmd/hev
 pnpm --dir adapter/dsh install
 pnpm --dir adapter/dsh build
 cd <deepseek-harness-root>
-pnpm dsh plugin --profile web add \
-  /absolute/path/to/hev/adapter/dsh/packages/runtime \
-  /absolute/path/to/hev/adapter/dsh/packages/skill \
-  /absolute/path/to/hev/adapter/dsh
+pnpm dsh plugin --profile web add /absolute/path/to/hev/adapter/dsh
 ```
 
-The two package paths install as plain profile dependencies; the final root path declares the bundle layer. A local workspace link does not make its sibling packages resolvable from the profile, so all three paths are required. Once the packages are published to a registry, installing the root bundle also installs its declared dependencies.
-
-Set the runtime executable in `$DSH_HOME/profiles/web/cordis.patch.yml` (`$DSH_HOME` defaults to `~/.dsh`):
+The package resolves its own platform binary. To test against a separately built binary, override only the environment row in `$DSH_HOME/profiles/web/cordis.patch.yml` (`$DSH_HOME` defaults to `~/.dsh`):
 
 ```yaml
 - id: hev-runtime
@@ -62,7 +78,7 @@ Inspect the effective composition before booting:
 pnpm dsh --profile web --dump-config
 ```
 
-The dump must keep `id: skill` with `name: '@deepseek-ai/dsh-skill'` and `disabled: true`, then contain enabled `hev-runtime` and `hev-skill` rows. Start the profile without opening a browser:
+The dump must keep `id: skill` with `name: '@deepseek-ai/dsh-skill'` and `disabled: true`, then contain enabled `hev-runtime` and `hev-skill-registry` rows. DSH profiles intentionally disable peer auto-install and resolve host DSH peers from the DSH installation. `pnpm peers check` may therefore report those host peers as missing; do not install duplicate copies into the profile. Use the config dump and an actual profile start as the integration checks. Start the profile without opening a browser:
 
 ```bash
 pnpm dsh web --no-open

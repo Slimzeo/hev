@@ -1,9 +1,0 @@
-{
-  "schemaVersion": 1,
-  "code": 404,
-  "message": "environment not found: missing",
-  "prompt": "create the environment before using it",
-  "data": {
-    "errorCode": "ENV_NOT_FOUND"
-  }
-}

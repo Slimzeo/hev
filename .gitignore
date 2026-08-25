@@ -5,4 +5,6 @@
 node_modules
 lib/
 .local/
+adapter/dsh/bin/
+adapter/dsh/*.tgz
 *.tsbuildinfo

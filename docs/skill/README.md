@@ -141,7 +141,7 @@ skill/
 2. [`articles/01-engineering-walkthrough.html`](articles/01-engineering-walkthrough.html)
 3. [`design-demos/03-evidence-lens-lab.html`](design-demos/03-evidence-lens-lab.html)
 
-### 设计 HEV
+### 设计 hev
 
 1. [`articles/03-architecture-decision-guide.html`](articles/03-architecture-decision-guide.html)
 2. [`evidence-ledger.md`](evidence-ledger.md)

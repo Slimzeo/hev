@@ -14,8 +14,8 @@ import { composeEntries, loadOverlayPatches } from '@deepseek-ai/dsh-app-boot'
 import CommandRuntime from '@deepseek-ai/dsh-commands'
 import { Session, SessionId } from '@deepseek-ai/dsh-session'
 import SkillRegistry from '@deepseek-ai/dsh-skill'
-import EnvironmentController from '@hev/dsh-runtime'
-import HevSkillRegistry from '@hev/dsh-skill'
+import EnvironmentController from '@slimzeo/hev-dsh-plugin/hev-runtime'
+import HevSkillRegistry from '@slimzeo/hev-dsh-plugin/hev-skill-registry'
 
 const execFileAsync = promisify(execFile)
 const adapterRoot = fileURLToPath(new URL('..', import.meta.url))
@@ -56,7 +56,7 @@ function agent(id: string): Agent {
   }
 }
 
-describe('HEV DSH bundle', () => {
+describe('hev DSH bundle', () => {
   it('runs the real Go CLI, persists base by default, and keeps exact Session filtering isolated', { timeout: 120_000 }, async () => {
     temporaryRoot = await mkdtemp(join(tmpdir(), 'hev-dsh-'))
     const home = join(temporaryRoot, 'home')
@@ -75,7 +75,13 @@ describe('HEV DSH bundle', () => {
     ], warning => void warnings.push(warning))
     expect(warnings).toEqual([])
 
-    const selectedIds = new Set(['agent', 'commands', 'skill', 'hev-runtime', 'hev-skill'])
+    const selectedIds = new Set([
+      'agent',
+      'commands',
+      'skill',
+      'hev-runtime',
+      'hev-skill-registry',
+    ])
     const selected = entries.filter(entry => entry.id !== undefined && selectedIds.has(entry.id))
     const configPath = join(temporaryRoot, 'cordis.json')
     await writeFile(configPath, `${JSON.stringify(selected, null, 2)}\n`)
@@ -89,8 +95,8 @@ describe('HEV DSH bundle', () => {
       ['@deepseek-ai/dsh-agent', AgentRegistry],
       ['@deepseek-ai/dsh-commands', CommandRuntime],
       ['@deepseek-ai/dsh-skill', SkillRegistry],
-      ['@hev/dsh-runtime', EnvironmentController],
-      ['@hev/dsh-skill', HevSkillRegistry],
+      ['@slimzeo/hev-dsh-plugin/hev-runtime', EnvironmentController],
+      ['@slimzeo/hev-dsh-plugin/hev-skill-registry', HevSkillRegistry],
     ])
     ctx.loader.internal = {
       version: 'v2',
@@ -113,7 +119,7 @@ describe('HEV DSH bundle', () => {
     })
     expect(rows.get('skill')?.fiber).toBeUndefined()
     expect(rows.get('hev-runtime')?.fiber).toBeDefined()
-    expect(rows.get('hev-skill')?.fiber).toBeDefined()
+    expect(rows.get('hev-skill-registry')?.fiber).toBeDefined()
 
     for (const name of ['allowed-skill', 'off-skill', 'outside-skill']) {
       ctx.skills.register({

@@ -1,28 +1,78 @@
 {
-  "name": "@hev/dsh-adapter",
+  "name": "@slimzeo/hev-dsh-plugin",
+  "description": "hev Environment selection and Skill filtering for DeepSeek Harness",
   "version": "0.1.0",
-  "private": true,
+  "private": false,
+  "publishConfig": {
+    "access": "public",
+    "executableFiles": [
+      "bin/darwin-arm64/hev",
+      "bin/darwin-x64/hev",
+      "bin/linux-arm64/hev",
+      "bin/linux-x64/hev",
+      "bin/win32-x64/hev.exe"
+    ]
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Slimzeo/skill-env.git",
+    "directory": "adapter/dsh"
+  },
   "type": "module",
+  "exports": {
+    "./hev-runtime": {
+      "types": "./lib/types/hev-runtime/index.d.ts",
+      "default": "./lib/hev-runtime/index.js"
+    },
+    "./hev-skill-registry": {
+      "types": "./lib/types/hev-skill-registry/index.d.ts",
+      "default": "./lib/hev-skill-registry/index.js"
+    },
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
   "packageManager": "pnpm@11.7.0",
   "engines": {
     "node": "^22.19.0 || >=24.0.0"
   },
   "scripts": {
-    "build": "tsc -b packages/runtime packages/skill && pnpm --dir packages/runtime exec tsdown lib/types/index.js --out-dir lib --format esm --platform node --target es2024 --no-clean --no-fixed-extension && pnpm --dir packages/skill exec tsdown lib/types/index.js --out-dir lib --format esm --platform node --target es2024 --no-clean --no-fixed-extension",
-    "typecheck": "tsc -b --pretty false",
-    "test": "vitest run --config packages/runtime/vitest.config.ts --configLoader native"
+    "build": "pnpm run build:typescript && pnpm run build:binaries",
+    "build:typescript": "tsc -p tsconfig.json --pretty false && tsdown lib/types/hev-runtime/index.js lib/types/hev-skill-registry/index.js --root lib/types --out-dir lib --format esm --platform node --target es2024 --no-clean --no-fixed-extension",
+    "build:binaries": "node scripts/build-binaries.mjs",
+    "typecheck": "tsc -p tsconfig.json --pretty false",
+    "test": "vitest run --config vitest.config.ts --configLoader native",
+    "prepack": "pnpm run build"
   },
   "files": [
-    "cordis.patch.yml"
+    "bin/**/hev",
+    "bin/**/hev.exe",
+    "cordis.patch.yml",
+    "lib/hev-runtime/index.js",
+    "lib/hev-skill-registry/index.js",
+    "lib/types/**/*.d.ts"
   ],
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
     }
   },
+  "license": "MIT",
   "dependencies": {
-    "@hev/dsh-runtime": "workspace:^",
-    "@hev/dsh-skill": "workspace:^"
+    "@deepseek-ai/dsh-native-command": "^0.1.0-rc.8",
+    "@deepseek-ai/schemastery": "^3.18.1"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/dsh-agent": "^0.1.0-rc.8",
+    "@deepseek-ai/dsh-brand": "^0.1.0-rc.8",
+    "@deepseek-ai/dsh-commands": "^0.1.0-rc.8",
+    "@deepseek-ai/dsh-session": "^0.1.0-rc.8",
+    "@deepseek-ai/dsh-skill": "^0.1.0-rc.8"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/dsh-commands": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
@@ -31,8 +81,11 @@
     "@deepseek-ai/dsh-agent": "^0.1.0-rc.8",
     "@deepseek-ai/dsh-app-boot": "^0.1.0-rc.8",
     "@deepseek-ai/dsh-commands": "^0.1.0-rc.8",
+    "@deepseek-ai/dsh-brand": "^0.1.0-rc.8",
+    "@deepseek-ai/dsh-native-command": "^0.1.0-rc.8",
     "@deepseek-ai/dsh-session": "^0.1.0-rc.8",
     "@deepseek-ai/dsh-skill": "^0.1.0-rc.8",
+    "@deepseek-ai/schemastery": "^3.18.1",
     "@types/node": "^22.20.0",
     "tsdown": "^0.22.2",
     "typescript": "^6.0.3",

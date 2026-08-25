@@ -2,7 +2,7 @@
 
 > 讨论对象：SkillLens，*From Raw Experience to Skill Consumption: A Systematic Study of Model-Generated Agent Skills*，arXiv:2605.23899v1。  
 > 论文读取覆盖：本地 [`paper.pdf`](paper.pdf) 物理 p.1–24，包含正文与附录。  
-> 文档性质：论文证据边界 + 本解读的批评 + HEV 产品主张。三者不混写。
+> 文档性质：论文证据边界 + 本解读的批评 + hev 产品主张。三者不混写。
 
 ## 一句话判断
 
@@ -394,7 +394,7 @@ Pack vs incumbent Pack，并做成员消融、顺序与权限测试
 ```text
 SkillLens：这个 Skill 对这个 target 有用吗？
 
-HEV：
+hev：
 这个用户为什么选择这组 Skill？
 这个 Pack 在哪些环境中有证据？
 社区如何复用又不抹掉个体差异？

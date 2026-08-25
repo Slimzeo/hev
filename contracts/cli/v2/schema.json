@@ -1,0 +1,130 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Slimzeo/hev/contracts/cli/v2/schema.json",
+  "title": "hev CLI response v2",
+  "oneOf": [
+    { "$ref": "#/$defs/createEnvironmentResponse" },
+    { "$ref": "#/$defs/addEnvironmentSkillResponse" },
+    { "$ref": "#/$defs/useEnvironmentResponse" },
+    { "$ref": "#/$defs/errorResponse" }
+  ],
+  "$defs": {
+    "policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": { "enum": ["auto", "off"] }
+      }
+    },
+    "environmentSkill": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["skillKey", "policy"],
+      "properties": {
+        "skillKey": { "type": "string", "minLength": 1 },
+        "policy": { "$ref": "#/$defs/policy" }
+      }
+    },
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "revision", "skills"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1 },
+        "revision": { "type": "integer", "minimum": 1 },
+        "skills": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/environmentSkill" }
+        }
+      }
+    },
+    "environmentSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "revision"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1 },
+        "revision": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "successBase": {
+      "type": "object",
+      "required": ["schemaVersion", "code", "message", "prompt", "data"],
+      "properties": {
+        "schemaVersion": { "const": 2 },
+        "code": { "const": 200 },
+        "message": { "type": "string", "minLength": 1 },
+        "prompt": { "const": "" }
+      }
+    },
+    "createEnvironmentResponse": {
+      "$ref": "#/$defs/successBase",
+      "unevaluatedProperties": false,
+      "properties": {
+        "message": { "const": "environment created" },
+        "data": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["environment"],
+          "properties": {
+            "environment": { "$ref": "#/$defs/environment" }
+          }
+        }
+      }
+    },
+    "addEnvironmentSkillResponse": {
+      "$ref": "#/$defs/successBase",
+      "unevaluatedProperties": false,
+      "properties": {
+        "message": { "const": "skill added to environment" },
+        "data": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["environmentSkill", "environments"],
+          "properties": {
+            "environmentSkill": { "$ref": "#/$defs/environmentSkill" },
+            "environments": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "$ref": "#/$defs/environmentSummary" }
+            }
+          }
+        }
+      }
+    },
+    "useEnvironmentResponse": {
+      "$ref": "#/$defs/successBase",
+      "unevaluatedProperties": false,
+      "properties": {
+        "message": { "const": "environment resolved" },
+        "data": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["environment"],
+          "properties": {
+            "environment": { "$ref": "#/$defs/environment" }
+          }
+        }
+      }
+    },
+    "errorResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "code", "message", "prompt", "data"],
+      "properties": {
+        "schemaVersion": { "const": 2 },
+        "code": { "enum": [400, 404, 409, 500] },
+        "message": { "type": "string", "minLength": 1 },
+        "prompt": { "type": "string" },
+        "data": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {}
+        }
+      }
+    }
+  }
+}

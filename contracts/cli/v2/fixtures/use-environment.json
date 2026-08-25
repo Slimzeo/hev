@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 2,
+  "code": 200,
+  "message": "environment resolved",
+  "prompt": "",
+  "data": {
+    "environment": {
+      "id": "env_coding",
+      "name": "coding",
+      "revision": 2,
+      "skills": [
+        {
+          "skillKey": "code-review",
+          "policy": {
+            "kind": "auto"
+          }
+        }
+      ]
+    }
+  }
+}
