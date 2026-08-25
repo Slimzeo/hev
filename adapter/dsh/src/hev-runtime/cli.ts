@@ -5,7 +5,7 @@
 import { runNativeCommand } from '@deepseek-ai/dsh-native-command'
 import type { NativeCommandRunner } from '@deepseek-ai/dsh-native-command'
 import { EnvironmentId, StatusCode } from './environment.ts'
-import type { Environment, EnvironmentSkillSpec, FailureStatusCode } from './environment.ts'
+import type { Environment, EnvironmentSkillSpec, EnvironmentSummary, FailureStatusCode } from './environment.ts'
 
 const SCHEMA_VERSION = 2
 const NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u
@@ -99,6 +99,24 @@ export class HevCliClient {
     return response.message
   }
 
+  /** List all current Environments through the CLI.
+   * @param signal - operation cancellation signal.
+   * @returns validated Environment metadata ordered by the Core.
+   */
+  async listEnvironments(signal: AbortSignal): Promise<readonly EnvironmentSummary[]> {
+    const response = await this.invoke(['env', 'list', '--output', 'json'], signal)
+    const environments = array(response.data.environments, 'data.environments')
+    if (environments.length === 0) protocol('data.environments must not be empty')
+    const seen = new Set<string>()
+    const decoded = environments.map((value, index) => {
+      const environment = decodeEnvironmentSummary(value, `data.environments[${String(index)}]`)
+      if (seen.has(environment.id)) protocol(`duplicate environment id "${environment.id}"`)
+      seen.add(environment.id)
+      return environment
+    })
+    return Object.freeze(decoded)
+  }
+
   /** Add one Skill binding through the CLI.
    * @param args - exact `skill add` argv excluding the JSON-output suffix.
    * @param signal - operation cancellation signal.
@@ -111,9 +129,9 @@ export class HevCliClient {
     if (environments.length === 0) protocol('data.environments must not be empty')
     const seen = new Set<string>()
     environments.forEach((value, index) => {
-      const environmentId = decodeEnvironmentSummaryId(value, `data.environments[${String(index)}]`)
-      if (seen.has(environmentId)) protocol(`duplicate environment id "${environmentId}"`)
-      seen.add(environmentId)
+      const environment = decodeEnvironmentSummary(value, `data.environments[${String(index)}]`)
+      if (seen.has(environment.id)) protocol(`duplicate environment id "${environment.id}"`)
+      seen.add(environment.id)
     })
     return response.message
   }
@@ -184,14 +202,14 @@ function decodeEnvironment(value: BaseResponse['data']): Environment {
   })
 }
 
-function decodeEnvironmentSummaryId(value: BaseResponse['data'], jsonPath: string): EnvironmentId {
+function decodeEnvironmentSummary(value: BaseResponse['data'], jsonPath: string): EnvironmentSummary {
   const input = record(value, jsonPath)
   const id = environmentId(input.id, `${jsonPath}.id`)
   const name = nonEmptyString(input.name, `${jsonPath}.name`)
   if (!NAME.test(name)) protocol(`${jsonPath}.name must be lowercase kebab-case`)
   const revision = integer(input.revision, `${jsonPath}.revision`)
   if (revision < 1) protocol(`${jsonPath}.revision must be positive`)
-  return EnvironmentId(id)
+  return Object.freeze({ id: EnvironmentId(id), name, revision })
 }
 
 function decodeSkill(value: BaseResponse['data'], jsonPath: string): EnvironmentSkillSpec {

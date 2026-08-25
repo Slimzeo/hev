@@ -57,7 +57,7 @@ function agent(id: string): Agent {
 }
 
 describe('hev DSH bundle', () => {
-  it('runs the real Go CLI, persists base by default, and keeps exact Session filtering isolated', { timeout: 120_000 }, async () => {
+  it('runs the real Go CLI and applies Environment selection per exact Session', { timeout: 120_000 }, async () => {
     temporaryRoot = await mkdtemp(join(tmpdir(), 'hev-dsh-'))
     const home = join(temporaryRoot, 'home')
     const executable = join(temporaryRoot, 'hev')
@@ -137,11 +137,23 @@ describe('hev DSH bundle', () => {
     const view = { scope: owner, signal }
     const otherView = { scope: other, signal }
     await expect(ctx.commands.execute(owner, '/hev env status', [], signal))
-      .resolves.toMatchObject({ result: { kind: 'success', text: 'base (env_base rev 1)' } })
+      .resolves.toMatchObject({ result: { kind: 'success', text: 'hev not activated' } })
     await expect(ctx.commands.execute(owner, '/hev skill list', [], signal))
-      .resolves.toMatchObject({ result: { kind: 'success', text: 'base: no skills configured' } })
-    expect((await ctx.skills.list(view)).map(skill => skill.name)).toEqual([])
-    expect((await ctx.skills.list(otherView)).map(skill => skill.name)).toEqual([])
+      .resolves.toMatchObject({ result: { kind: 'success', text: 'hev not activated' } })
+    const allSkillNames = ['allowed-skill', 'off-skill', 'outside-skill']
+    await expect(ctx.commands.execute(owner, '/hev skill list --global', [], signal))
+      .resolves.toMatchObject({
+        result: {
+          kind: 'success',
+          text: 'global:\n- allowed-skill\n- off-skill\n- outside-skill',
+        },
+      })
+    expect((await ctx.skills.list(view)).map(skill => skill.name)).toEqual(allSkillNames)
+    expect((await ctx.skills.list(otherView)).map(skill => skill.name)).toEqual(allSkillNames)
+    expect(await ctx.skills.get('outside-skill', view)).toMatchObject({ name: 'outside-skill' })
+
+    await expect(ctx.commands.execute(owner, '/hev env list', [], signal))
+      .resolves.toMatchObject({ result: { kind: 'success', text: 'environments:\n- base (base rev 1)' } })
     const store = JSON.parse(await readFile(join(home, '.hev', 'environments.json'), 'utf8')) as {
       schemaVersion: number
       environments: Array<{ id: string; name: string }>
@@ -149,7 +161,7 @@ describe('hev DSH bundle', () => {
     expect(store.schemaVersion).toBe(1)
     expect(store.environments.map(environment => environment.name)).toContain('base')
     expect(store.environments.find(environment => environment.name === 'base')).toMatchObject({
-      id: 'env_base',
+      id: 'base',
       name: 'base',
     })
 
@@ -157,13 +169,13 @@ describe('hev DSH bundle', () => {
       .resolves.toMatchObject({ result: { kind: 'success' } })
     await expect(ctx.commands.execute(
       owner,
-      '/hev skill add allowed-skill --env coding --policy auto',
+      '/hev skill add allowed-skill coding --policy auto',
       [],
       signal,
     )).resolves.toMatchObject({ result: { kind: 'success' } })
     await expect(ctx.commands.execute(
       owner,
-      '/hev skill add off-skill --env coding --policy off',
+      '/hev skill add off-skill coding --policy off',
       [],
       signal,
     )).resolves.toMatchObject({ result: { kind: 'success' } })
@@ -180,14 +192,34 @@ describe('hev DSH bundle', () => {
         },
       })
     await expect(ctx.commands.execute(other, '/hev env status', [], signal))
-      .resolves.toMatchObject({ result: { kind: 'success', text: 'base (env_base rev 1)' } })
+      .resolves.toMatchObject({ result: { kind: 'success', text: 'hev not activated' } })
     await expect(ctx.commands.execute(other, '/hev skill list', [], signal))
-      .resolves.toMatchObject({ result: { kind: 'success', text: 'base: no skills configured' } })
+      .resolves.toMatchObject({ result: { kind: 'success', text: 'hev not activated' } })
 
     expect((await ctx.skills.list(view)).map(skill => skill.name)).toEqual(['allowed-skill'])
-    expect((await ctx.skills.list(otherView)).map(skill => skill.name)).toEqual([])
+    expect((await ctx.skills.list(otherView)).map(skill => skill.name)).toEqual(allSkillNames)
     expect(await ctx.skills.get('allowed-skill', view)).toMatchObject({ name: 'allowed-skill' })
     expect(await ctx.skills.get('off-skill', view)).toBeUndefined()
     expect(await ctx.skills.get('outside-skill', view)).toBeUndefined()
+    await expect(ctx.commands.execute(owner, '/hev skill list --global', [], signal))
+      .resolves.toMatchObject({
+        result: {
+          kind: 'success',
+          text: 'global:\n- allowed-skill\n- off-skill\n- outside-skill',
+        },
+      })
+
+    await expect(ctx.commands.execute(owner, '/hev env quit', [], signal))
+      .resolves.toMatchObject({ result: { kind: 'success', text: 'base (base rev 1)' } })
+    await expect(ctx.commands.execute(owner, '/hev env status', [], signal))
+      .resolves.toMatchObject({ result: { kind: 'success', text: 'base (base rev 1)' } })
+    expect((await ctx.skills.list(view)).map(skill => skill.name)).toEqual([])
+
+    await expect(ctx.commands.execute(owner, '/hev env quit', [], signal))
+      .resolves.toMatchObject({ result: { kind: 'success', text: 'hev not activated' } })
+    await expect(ctx.commands.execute(owner, '/hev env status', [], signal))
+      .resolves.toMatchObject({ result: { kind: 'success', text: 'hev not activated' } })
+    expect((await ctx.skills.list(view)).map(skill => skill.name)).toEqual(allSkillNames)
+    expect(await ctx.skills.get('outside-skill', view)).toMatchObject({ name: 'outside-skill' })
   })
 })

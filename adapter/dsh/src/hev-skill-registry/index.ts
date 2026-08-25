@@ -9,6 +9,7 @@ import type {
   Config,
   SkillCatalogSnapshot,
   SkillDefinition,
+  SkillSummary,
   SkillViewOptions,
 } from '@deepseek-ai/dsh-skill'
 import type { Environment } from '../hev-runtime/index.ts'
@@ -24,6 +25,15 @@ export class HevSkillRegistry extends SkillRegistry {
    */
   constructor(ctx: Context, config: Config = {}) {
     super(ctx, config)
+  }
+
+  /**
+   * Return all native winners for one DSH view without applying an Environment.
+   * @param options - native lookup options, including the calling Agent scope.
+   * @returns the unfiltered native catalog.
+   */
+  async listAll(options: SkillViewOptions = {}): Promise<SkillSummary[]> {
+    return (await super.snapshot(options)).skills
   }
 
   /**
@@ -59,6 +69,7 @@ export class HevSkillRegistry extends SkillRegistry {
       : this.ctx.agents.list().find(candidate => candidate === options.scope)
     if (agent === undefined) return undefined
     const environment = await this.ctx.environment.current(agent.session, options.signal)
+    if (environment === undefined) return undefined
     return autoSkillNames(environment)
   }
 }

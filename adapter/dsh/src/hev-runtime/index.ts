@@ -13,12 +13,14 @@ import type { Environment, EnvironmentId } from './environment.ts'
 
 // Type-only edge: resolves ctx.commands for the optional command child.
 import type {} from '@deepseek-ai/dsh-commands'
+import type { SkillSummary, SkillViewOptions } from '@deepseek-ai/dsh-skill'
 export { EnvironmentId } from './environment.ts'
 export { StatusCode } from './environment.ts'
 export type {
   Environment,
   EnvironmentSkillPolicy,
   EnvironmentSkillSpec,
+  EnvironmentSummary,
   FailureStatusCode,
   SkillPolicyKind,
 } from './environment.ts'
@@ -41,7 +43,11 @@ interface RuntimeDependencies {
   readonly runner?: NativeCommandRunner
 }
 
-const USAGE = 'usage: /hev env create <name> | env use <id-or-name> | env status | skill add <skill-key> --env <name> [--env <name>...] [--policy auto|off] | skill list'
+interface GlobalSkillReader {
+  listAll(options?: SkillViewOptions): Promise<SkillSummary[]>
+}
+
+const USAGE = 'usage: /hev env create <name> | env list | env use <id-or-name> | env quit | env status | skill add <skill-key> <env-name> [env-name...] [--policy auto|off] | skill list [--global]'
 
 /** Owns live Environment selection and the optional `/hev` command. */
 export class EnvironmentController extends Service {
@@ -68,7 +74,7 @@ export class EnvironmentController extends Service {
       commandCtx.commands.register({
         name: 'hev',
         description: 'Manage skill environments',
-        input: { hint: 'env create | env use | env status | skill add | skill list' },
+        input: { hint: 'env create | env list | env use | env quit | env status | skill add | skill list' },
         handler: async ({ agent, rawInput, signal }) => {
           try {
             const words = rawInput.trim().split(/\s+/u).filter(word => word.length > 0)
@@ -85,17 +91,16 @@ export class EnvironmentController extends Service {
    * Resolve the latest Environment for one exact live Session.
    * @param session - exact in-process Session identity.
    * @param signal - optional operation cancellation signal.
-   * @returns the latest record for the Session's selection, or the default `base` Environment.
+   * @returns the latest selected Environment, or `undefined` when hev is not activated.
    */
   async current(
     session: Session,
     signal?: AbortSignal,
-  ): Promise<Environment> {
+  ): Promise<Environment | undefined> {
     const operationSignal = signal ?? new AbortController().signal
     const environmentId = this.environmentIdBySession.get(session)
-    const environment = environmentId === undefined
-      ? await this.cli.defaultEnvironment(operationSignal)
-      : await this.cli.use(environmentId, operationSignal)
+    if (environmentId === undefined) return undefined
+    const environment = await this.cli.use(environmentId, operationSignal)
     this.environmentIdBySession.set(session, environment.id)
     return environment
   }
@@ -117,13 +122,49 @@ export class EnvironmentController extends Service {
     return environment
   }
 
+  /** Leave the current Environment tier for one live agent.
+   * @param agent - exact agent whose Session leaves its current Environment.
+   * @param signal - optional operation cancellation signal.
+   * @returns `base` after leaving a non-base Environment, or `undefined` after leaving `base` or when already inactive.
+   */
+  async quit(agent: Agent, signal?: AbortSignal): Promise<Environment | undefined> {
+    const selectedId = this.environmentIdBySession.get(agent.session)
+    if (selectedId === undefined) return undefined
+    if (selectedId === 'base') {
+      this.environmentIdBySession.delete(agent.session)
+      return undefined
+    }
+    const base = await this.cli.defaultEnvironment(signal ?? new AbortController().signal)
+    this.environmentIdBySession.set(agent.session, base.id)
+    return base
+  }
+
   private async executeCommand(
     agent: Agent,
     words: readonly string[],
     signal: AbortSignal,
   ): Promise<{ kind: 'success'; text?: string } | { kind: 'error'; text: string }> {
+    if (words[0] === 'skill' && words[1] === 'list' && words.length === 3 && words[2] === '--global') {
+      const skills = this.ctx.get('skills') as Partial<GlobalSkillReader> | undefined
+      if (typeof skills?.listAll !== 'function') {
+        throw new Error('hev skill list --global requires the hev Skill Registry')
+      }
+      const cwd = agent.session.header.cwd
+      const available = await skills.listAll({
+        scope: agent,
+        signal,
+        ...(cwd === undefined ? {} : { cwd }),
+      })
+      return {
+        kind: 'success',
+        text: available.length === 0
+          ? 'global: no skills available'
+          : ['global:', ...available.map(skill => `- ${skill.name}`)].join('\n'),
+      }
+    }
     if (words[0] === 'skill' && words[1] === 'list' && words.length === 2) {
       const environment = await this.current(agent.session, signal)
+      if (environment === undefined) return { kind: 'success', text: 'hev not activated' }
       return {
         kind: 'success',
         text: environment.skills.length === 0
@@ -134,11 +175,31 @@ export class EnvironmentController extends Service {
             ].join('\n'),
       }
     }
+    if (words[0] === 'env' && words[1] === 'list' && words.length === 2) {
+      const environments = await this.cli.listEnvironments(signal)
+      return {
+        kind: 'success',
+        text: ['environments:', ...environments.map(environment => (
+          `- ${environment.name} (${environment.id} rev ${String(environment.revision)})`
+        ))].join('\n'),
+      }
+    }
+    if (words[0] === 'env' && words[1] === 'quit' && words.length === 2) {
+      const environment = await this.quit(agent, signal)
+      return {
+        kind: 'success',
+        text: environment === undefined
+          ? 'hev not activated'
+          : `${environment.name} (${environment.id} rev ${String(environment.revision)})`,
+      }
+    }
     if (words[0] === 'env' && words[1] === 'status' && words.length === 2) {
       const environment = await this.current(agent.session, signal)
       return {
         kind: 'success',
-        text: `${environment.name} (${environment.id} rev ${String(environment.revision)})`,
+        text: environment === undefined
+          ? 'hev not activated'
+          : `${environment.name} (${environment.id} rev ${String(environment.revision)})`,
       }
     }
     if (words[0] === 'env' && words[1] === 'use') {
@@ -163,17 +224,12 @@ export class EnvironmentController extends Service {
 }
 
 function validSkillAdd(words: readonly string[]): boolean {
-  if (words.length < 5 || words[2] === undefined || words[2].startsWith('-')) return false
-  let envCount = 0
-  let index = 3
-  while (index < words.length) {
-    const flag = words[index]
-    const value = words[index + 1]
-    if (flag === '--env' && value !== undefined && !value.startsWith('-')) envCount += 1
-    else if (flag !== '--policy' || (value !== 'auto' && value !== 'off')) return false
-    index += 2
-  }
-  return index === words.length && envCount > 0
+  if (words.length < 4 || words[2] === undefined || words[2].startsWith('-')) return false
+  const policyIndex = words.indexOf('--policy', 3)
+  const environmentEnd = policyIndex < 0 ? words.length : policyIndex
+  if (environmentEnd === 3 || words.slice(3, environmentEnd).some(word => word.startsWith('-'))) return false
+  return policyIndex < 0
+    || (policyIndex === words.length - 2 && (words[policyIndex + 1] === 'auto' || words[policyIndex + 1] === 'off'))
 }
 
 function renderFailure(error: unknown): string {

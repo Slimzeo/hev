@@ -1,6 +1,6 @@
 # hev — your personal Skill Environment manager
 
-hev groups native agent Skills into selectable Environments. Each live Session has exactly one current Environment; the current DSH adapter supports the minimal `create env → skill add env → use env` flow.
+hev groups native agent Skills into selectable Environments. A live Session may select one Environment; without a selection, hev is inactive and native Skill visibility is unchanged.
 
 ```bash
 npx @deepseek-ai/dsh plugin --profile web add @slimzeo/hev-dsh-plugin@latest
@@ -18,7 +18,7 @@ internal/model/
   environment.go                       Environment aggregate, validation, and status errors
   skill.go                             Skill entity, Environment-Skill relation, and policy
 internal/service/
-  environment.go                       Environment create and resolve operations plus Store interface
+  environment.go                       Environment create, list, and resolve operations plus Store interface
   skill.go                             Add a Skill to one or more Environments
 internal/dal/json/environment.go        locked JSON persistence and atomic replacement
 internal/packer/response.go             domain results and errors to CLI v2 JSON

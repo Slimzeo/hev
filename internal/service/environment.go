@@ -11,6 +11,7 @@ import (
 type Store interface {
 	Create(context.Context, model.Environment) (model.Environment, error)
 	Default(context.Context) (model.Environment, error)
+	List(context.Context) ([]model.Environment, error)
 	GetByIDOrName(context.Context, string) (model.Environment, error)
 	UpdateMany(context.Context, []string, func([]model.Environment) error) ([]model.Environment, error)
 }
@@ -53,6 +54,15 @@ func (s *Service) Default(ctx context.Context) (model.Environment, error) {
 		return model.Environment{}, fmt.Errorf("resolve default environment: %w", err)
 	}
 	return current, nil
+}
+
+// List returns all current Environments.
+func (s *Service) List(ctx context.Context) ([]model.Environment, error) {
+	environments, err := s.store.List(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list environments: %w", err)
+	}
+	return environments, nil
 }
 
 // Resolve returns the latest Environment for an ID or name.

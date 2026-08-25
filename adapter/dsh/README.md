@@ -33,15 +33,20 @@ The MVP supports exactly these commands:
 
 ```text
 /hev env create <name>
-/hev skill add <skill-key> --env <name> [--env <name>...] [--policy auto|off]
-/hev skill list
+/hev env list
 /hev env use <id-or-name>
+/hev env quit
 /hev env status
+/hev skill add <skill-key> <env-name> [env-name...] [--policy auto|off]
+/hev skill list
+/hev skill list --global
 ```
 
-Selection is process-local and keyed by the exact live DSH `Session` object. Every live Session has exactly one current Environment. A Session with no explicit `use` starts from the ordinary empty `base` Environment. `/hev env status` reports that exact Session's current Environment without changing it; `/hev skill list` reports every Skill configured in that Environment, including `off` entries. The Go Store automatically persists that `env_base`, revision `1`, `skills: []` record when its file is missing or contains an empty `environments` array. The runtime stores one canonical Environment ID, then resolves it again on each Skill read so Environment changes use the latest current record. `env use` never composes Environments; repeated `--env` on `skill add` remains valid because it mutates several Environment configurations without selecting them.
+Selection is process-local and keyed by the exact live DSH `Session` object. A Session with no explicit `use` is not managed by hev: `/hev env status` reports `hev not activated`, and the Skill Registry keeps the native unfiltered view. `/hev env use` selects one Environment. `/hev env quit` moves a non-`base` selection to `base`; quitting `base` removes the Session selection and deactivates hev.
 
-The Skill Registry entry keeps DSH provider discovery, winner selection, validation, and Skill loading unchanged. An exact live Agent sees only native winners whose key has `policy.kind === 'auto'` in its current Environment; `off` and unlisted keys are unavailable through `list()`, `snapshot()`, and `get()`. Only a read without an exact live Agent scope keeps the native view. A configured hev key that has no native winner remains hidden but does not make `use` fail.
+`/hev env list` reports all persisted Environments. `/hev skill list` reports every Skill configured in the selected Environment, including `off` entries, while `/hev skill list --global` reports the current DSH view before Environment filtering. The Go Store automatically persists the ordinary `base`, revision `1`, `skills: []` record when its file is missing or contains an empty `environments` array, and migrates the earlier `env_base` ID to `base` on read. The runtime stores one canonical Environment ID, then resolves it again on each filtered Skill read so Environment changes use the latest record. `env use` never composes Environments; multiple positional Environment names on `skill add` mutate several configurations without selecting them.
+
+The Skill Registry entry keeps DSH provider discovery, winner selection, validation, and Skill loading unchanged. An active exact live Agent sees only native winners whose key has `policy.kind === 'auto'` in its current Environment; `off` and unlisted keys are unavailable through `list()`, `snapshot()`, and `get()`. Inactive Sessions and reads without an exact live Agent scope keep the native view. A configured hev key that has no native winner remains hidden but does not make `use` fail.
 
 ## Development
 
@@ -52,7 +57,7 @@ pnpm test
 pnpm build
 ```
 
-`pnpm build` compiles both Cordis subpaths and the supported hev binaries into the package. The integration test builds a temporary native hev executable, boots the composed rows through the DSH Loader, and verifies the default `base`, `create -> add -> use -> filtered native SkillRegistry`, and exact-Session isolation.
+`pnpm build` compiles both Cordis subpaths and the supported hev binaries into the package. The integration test builds a temporary native hev executable, boots the composed rows through the DSH Loader, and verifies inactive passthrough, `create -> add -> use -> filtered native SkillRegistry`, two-level `quit`, and exact-Session isolation.
 
 ## Local DSH integration
 
@@ -90,9 +95,9 @@ In one live Session, create an Environment, add an `auto` key and an `off` key t
 
 ```text
 /hev env create review
-/hev skill add <native-auto-skill> --env review --policy auto
-/hev skill add <native-off-skill> --env review --policy off
+/hev skill add <native-auto-skill> review --policy auto
+/hev skill add <native-off-skill> review --policy off
 /hev env use review
 ```
 
-The auto Skill is listed and loadable; the off Skill is not. A missing native Skill key does not block `use`, but it cannot appear because there is no native winner. Open another Session to verify it still uses the empty `base` Environment; selecting `review` there does not change the first Session.
+The auto Skill is listed and loadable; the off Skill is not. A missing native Skill key does not block `use`, but it cannot appear because there is no native winner. Open another Session to verify hev is inactive there and native Skills remain unfiltered; selecting `review` there does not change the first Session.

@@ -18,7 +18,7 @@ func (s *Service) AddSkill(
 		return model.EnvironmentSkill{}, nil, err
 	}
 	if len(environmentNames) == 0 {
-		return model.EnvironmentSkill{}, nil, model.NewError(model.StatusCodeInvalidArgument, "at least one --env is required")
+		return model.EnvironmentSkill{}, nil, model.NewError(model.StatusCodeInvalidArgument, "at least one environment is required")
 	}
 	if err := policy.Validate(); err != nil {
 		return model.EnvironmentSkill{}, nil, err

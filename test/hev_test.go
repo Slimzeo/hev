@@ -279,6 +279,23 @@ func TestEnvironmentServiceResolve(t *testing.T) {
 	})
 }
 
+func TestEnvironmentServiceList(t *testing.T) {
+	want := []model.Environment{
+		testEnvironment("base", "base", 1),
+		testEnvironment("env-coding", "coding", 2),
+	}
+	store := &stubEnvironmentStore{listResult: want}
+	service := environmentservice.New(store, func() model.EnvironmentID { return "unused" })
+
+	got, err := service.List(context.Background())
+	if err != nil {
+		t.Fatalf("List returned error: %v", err)
+	}
+	if !reflect.DeepEqual(got, want) || store.listCalls != 1 {
+		t.Fatalf("List = %#v, calls=%d, want %#v", got, store.listCalls, want)
+	}
+}
+
 func TestJSONEnvironmentStore(t *testing.T) {
 	t.Run("initializes base and persists created Environments", func(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "nested", "environments.json")
@@ -287,7 +304,7 @@ func TestJSONEnvironmentStore(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Default returned error: %v", err)
 		}
-		if !reflect.DeepEqual(base, testEnvironment("env_base", "base", 1)) {
+		if !reflect.DeepEqual(base, testEnvironment("base", "base", 1)) {
 			t.Fatalf("default Environment = %#v", base)
 		}
 
@@ -340,8 +357,25 @@ func TestJSONEnvironmentStore(t *testing.T) {
 		}
 		store := jsonstore.NewEnvironmentStore(path)
 		base, err := store.Default(context.Background())
-		if err != nil || base.ID != "env_base" || base.Name != "base" {
+		if err != nil || base.ID != "base" || base.Name != "base" {
 			t.Fatalf("Default = %#v, err=%v", base, err)
+		}
+	})
+
+	t.Run("migrates the legacy base ID", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "environments.json")
+		legacy := "{\"schemaVersion\":1,\"environments\":[{\"id\":\"env_base\",\"name\":\"base\",\"revision\":1,\"skills\":[]}]}\n"
+		if err := os.WriteFile(path, []byte(legacy), 0o600); err != nil {
+			t.Fatalf("WriteFile returned error: %v", err)
+		}
+		store := jsonstore.NewEnvironmentStore(path)
+
+		base, err := store.Default(context.Background())
+		if err != nil || base.ID != "base" {
+			t.Fatalf("Default = %#v, err=%v", base, err)
+		}
+		if bytes.Contains(mustReadFile(t, path), []byte("env_base")) {
+			t.Fatal("legacy base ID remained persisted")
 		}
 	})
 
@@ -520,9 +554,18 @@ func TestJSONCommands(t *testing.T) {
 		t.Fatalf("create response = %#v, data=%#v", created, createData)
 	}
 
-	added := runJSONCommand(t, service, "skill", "add", "code-review", "--env", "coding", "--policy", "off", "--output", "json")
+	added := runJSONCommand(t, service, "skill", "add", "code-review", "coding", "base", "--policy", "off", "--output", "json")
 	if added.Message != "skill added to environment" {
 		t.Fatalf("add message = %q", added.Message)
+	}
+	var addData struct {
+		Environments []struct {
+			Name string `json:"name"`
+		} `json:"environments"`
+	}
+	decodeData(t, added, &addData)
+	if got := []string{addData.Environments[0].Name, addData.Environments[1].Name}; !reflect.DeepEqual(got, []string{"coding", "base"}) {
+		t.Fatalf("updated Environment names = %v", got)
 	}
 
 	used := runJSONCommand(t, service, "env", "use", "coding", "--output", "json")
@@ -536,8 +579,20 @@ func TestJSONCommands(t *testing.T) {
 
 	defaultResponse := runJSONCommand(t, service, "env", "use", "--output", "json")
 	decodeData(t, defaultResponse, &useData)
-	if useData.Environment.ID != "env_base" || useData.Environment.Name != "base" {
+	if useData.Environment.ID != "base" || useData.Environment.Name != "base" {
 		t.Fatalf("default Environment = %#v", useData.Environment)
+	}
+
+	listed := runJSONCommand(t, service, "env", "list", "--output", "json")
+	var listData struct {
+		Environments []struct {
+			ID   model.EnvironmentID `json:"id"`
+			Name string              `json:"name"`
+		} `json:"environments"`
+	}
+	decodeData(t, listed, &listData)
+	if got := []string{listData.Environments[0].Name, listData.Environments[1].Name}; !reflect.DeepEqual(got, []string{"base", "coding"}) {
+		t.Fatalf("listed Environment names = %v", got)
 	}
 }
 
@@ -549,7 +604,9 @@ func TestJSONCommandFailures(t *testing.T) {
 	}{
 		{name: "missing Environment", args: []string{"env", "use", "missing", "--output", "json"}, wantCode: 404},
 		{name: "multiple Environment arguments", args: []string{"env", "use", "alpha", "beta", "--output", "json"}, wantCode: 400},
-		{name: "unsupported policy", args: []string{"skill", "add", "search", "--env", "base", "--policy", "always", "--output", "json"}, wantCode: 400},
+		{name: "missing Environment argument", args: []string{"skill", "add", "search", "--output", "json"}, wantCode: 400},
+		{name: "rejects removed env flag", args: []string{"skill", "add", "search", "--env", "base", "--output", "json"}, wantCode: 400},
+		{name: "unsupported policy", args: []string{"skill", "add", "search", "base", "--policy", "always", "--output", "json"}, wantCode: 400},
 		{name: "unknown command", args: []string{"unknown", "--output", "json"}, wantCode: 400},
 	}
 
@@ -591,13 +648,14 @@ func TestCLIContract(t *testing.T) {
 		wantSuccess bool
 	}{
 		{args: []string{"env", "create", "coding", "--output", "json"}, wantSuccess: true},
-		{args: []string{"skill", "add", "code-review", "--env", "coding", "--output", "json"}, wantSuccess: true},
+		{args: []string{"skill", "add", "code-review", "coding", "--output", "json"}, wantSuccess: true},
+		{args: []string{"env", "list", "--output", "json"}, wantSuccess: true},
 		{args: []string{"env", "use", "coding", "--output", "json"}, wantSuccess: true},
 		{args: []string{"env", "use", "--output", "json"}, wantSuccess: true},
 		{args: []string{"env", "use", "coding", "base", "--output", "json"}},
 		{args: []string{"env", "use", "missing", "--output", "json"}},
 		{args: []string{"env", "create", "--output", "json"}},
-		{args: []string{"skill", "add", "code-review", "--env", "coding", "--policy", "always", "--output", "json"}},
+		{args: []string{"skill", "add", "code-review", "coding", "--policy", "always", "--output", "json"}},
 		{args: []string{"unknown", "--output", "json"}},
 	} {
 		var stdout bytes.Buffer
@@ -646,6 +704,9 @@ type stubEnvironmentStore struct {
 	defaultCalls    int
 	defaultResult   model.Environment
 	defaultErr      error
+	listCalls       int
+	listResult      []model.Environment
+	listErr         error
 	getCalls        []string
 	getResults      map[string]model.Environment
 	getErrors       map[string]error
@@ -665,6 +726,11 @@ func (s *stubEnvironmentStore) Create(_ context.Context, value model.Environment
 func (s *stubEnvironmentStore) Default(_ context.Context) (model.Environment, error) {
 	s.defaultCalls++
 	return model.Clone(s.defaultResult), s.defaultErr
+}
+
+func (s *stubEnvironmentStore) List(_ context.Context) ([]model.Environment, error) {
+	s.listCalls++
+	return cloneEnvironments(s.listResult), s.listErr
 }
 
 func (s *stubEnvironmentStore) GetByIDOrName(_ context.Context, identifier string) (model.Environment, error) {

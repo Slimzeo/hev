@@ -1,12 +1,13 @@
 import { Context } from '@deepseek-ai/cordis'
 import { join } from 'node:path'
-import { Inbox } from '@deepseek-ai/dsh-agent'
+import AgentRegistry, { Inbox } from '@deepseek-ai/dsh-agent'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import CommandRuntime from '@deepseek-ai/dsh-commands'
 import { Session, SessionId } from '@deepseek-ai/dsh-session'
 import { describe, expect, it, vi } from 'vitest'
 import EnvironmentController, { EnvironmentId, HevCliClient, StatusCode } from '../src/hev-runtime/index.ts'
 import type { Environment, NativeCommandRunner } from '../src/hev-runtime/index.ts'
+import HevSkillRegistry from '../src/hev-skill-registry/index.ts'
 
 const signal = new AbortController().signal
 
@@ -24,10 +25,10 @@ function success(message: string, data: unknown): string {
   return JSON.stringify({ schemaVersion: 2, code: 200, message, prompt: '', data })
 }
 
-function environment(id: string, revision: number, skills = ['code-review']): Environment {
+function environment(id: string, revision: number, skills = ['code-review'], name = 'coding'): Environment {
   return {
     id: EnvironmentId(id),
-    name: 'coding',
+    name,
     revision,
     skills: skills.map(skillKey => ({ skillKey, policy: { kind: 'auto' as const } })),
   }
@@ -60,18 +61,18 @@ async function world(runner: NativeCommandRunner) {
 describe('@slimzeo/hev-dsh-plugin/hev-runtime', () => {
   it('uses the package-local platform binary by default', async () => {
     const runner = vi.fn<NativeCommandRunner>(async () => ({
-      stdout: response(environment('env_base', 1, [])),
+      stdout: response(environment('base', 1, [], 'base')),
       stderr: '',
     }))
     const runtime = new EnvironmentController(new Context(), {}, { runner })
     const session = Session.create(SessionId('bundled-binary'))
 
-    await runtime.current(session, signal)
+    await runtime.use(agent(session), 'base', signal)
 
     const executable = process.platform === 'win32' ? 'hev.exe' : 'hev'
     expect(runner).toHaveBeenCalledWith(
       expect.stringContaining(join('bin', `${process.platform}-${process.arch}`, executable)),
-      ['env', 'use', '--output', 'json'],
+      ['env', 'use', 'base', '--output', 'json'],
       signal,
     )
   })
@@ -94,13 +95,13 @@ describe('@slimzeo/hev-dsh-plugin/hev-runtime', () => {
     ], signal)
 
     revision = 3
-    expect((await runtime.current(session, signal)).revision).toBe(3)
+    expect((await runtime.current(session, signal))?.revision).toBe(3)
     expect(runner).toHaveBeenNthCalledWith(2, 'hev-test', [
       'env', 'use', 'env_canonical', '--output', 'json',
     ], signal)
   })
 
-  it('defaults to base for an unselected Session and then isolates exact Session overrides', async () => {
+  it('keeps an unselected Session inactive and isolates exact Session overrides', async () => {
     const runner = vi.fn<NativeCommandRunner>(async () => ({
       stdout: response(environment('env_1', 1, ['code-review'])),
       stderr: '',
@@ -109,19 +110,15 @@ describe('@slimzeo/hev-dsh-plugin/hev-runtime', () => {
     const selected = Session.create(SessionId('same'))
     const impostor = Session.create(SessionId('same'))
 
-    expect((await runtime.current(impostor, signal)).id).toBe('env_1')
-    expect(runner).toHaveBeenNthCalledWith(1, 'hev-test', [
-      'env', 'use', '--output', 'json',
-    ], signal)
+    await expect(runtime.current(impostor, signal)).resolves.toBeUndefined()
+    expect(runner).not.toHaveBeenCalled()
 
     await runtime.use(agent(selected), 'coding', signal)
 
-    expect((await runtime.current(selected, signal)).id).toBe('env_1')
-    expect((await runtime.current(impostor, signal)).id).toBe('env_1')
+    expect((await runtime.current(selected, signal))?.id).toBe('env_1')
+    await expect(runtime.current(impostor, signal)).resolves.toBeUndefined()
     expect(runner.mock.calls.map(call => call[1])).toEqual([
-      ['env', 'use', '--output', 'json'],
       ['env', 'use', 'coding', '--output', 'json'],
-      ['env', 'use', 'env_1', '--output', 'json'],
       ['env', 'use', 'env_1', '--output', 'json'],
     ])
   })
@@ -152,10 +149,10 @@ describe('@slimzeo/hev-dsh-plugin/hev-runtime', () => {
       statusCode: StatusCode.NotFound, prompt: 'create it',
     })
     await expect(runtime.use(owner, 'malformed', signal)).rejects.toMatchObject({ statusCode: StatusCode.ProtocolError })
-    expect((await runtime.current(owner.session, signal)).revision).toBe(5)
+    expect((await runtime.current(owner.session, signal))?.revision).toBe(5)
   })
 
-  it('forwards the supported /hev operations and reports the current Session Environment', async () => {
+  it('forwards commands and applies the two-level quit transition', async () => {
     const runner = vi.fn<NativeCommandRunner>(async (_command, args) => {
       if (args[0] === 'env' && args[1] === 'create') {
         return {
@@ -167,14 +164,32 @@ describe('@slimzeo/hev-dsh-plugin/hev-runtime', () => {
         return {
           stdout: success('skill added to environment', {
             environmentSkill: { skillKey: 'code-review', policy: { kind: 'off' } },
-            environments: [{ id: 'env_created', name: 'coding', revision: 2 }],
+            environments: [
+              { id: 'env_created', name: 'coding', revision: 2 },
+              { id: 'env_writing', name: 'writing', revision: 4 },
+            ],
           }),
           stderr: '',
         }
       }
+      if (args[0] === 'env' && args[1] === 'list') {
+        return {
+          stdout: success('environments listed', {
+            environments: [
+              { id: 'base', name: 'base', revision: 1 },
+              { id: 'env_created', name: 'coding', revision: 2 },
+            ],
+          }),
+          stderr: '',
+        }
+      }
+      if (args[0] === 'env' && args[1] === 'use' && (args[2] === '--output' || args[2] === 'base')) {
+        return { stdout: response(environment('base', 1, [], 'base')), stderr: '' }
+      }
       return { stdout: response(environment('env_created', 2)), stderr: '' }
     })
     const ctx = new Context()
+    await ctx.plugin(AgentRegistry)
     await ctx.plugin(CommandRuntime)
     class TestEnvironmentController extends EnvironmentController {
       constructor(pluginContext: Context) {
@@ -182,19 +197,40 @@ describe('@slimzeo/hev-dsh-plugin/hev-runtime', () => {
       }
     }
     const fiber = await ctx.plugin(TestEnvironmentController)
+    await ctx.plugin(HevSkillRegistry)
+    for (const name of ['code-review', 'outside-skill']) {
+      ctx.skills.register({
+        name,
+        description: `${name} description`,
+        source: 'runtime',
+        content: `${name} body`,
+      })
+    }
     const owner = agent(Session.create(SessionId('commands')))
+    ctx.agents.register(owner)
 
     await expect(ctx.commands.execute(owner, '/hev env status', [], signal))
-      .resolves.toMatchObject({ result: { kind: 'success', text: 'coding (env_created rev 2)' } })
+      .resolves.toMatchObject({ result: { kind: 'success', text: 'hev not activated' } })
     await expect(ctx.commands.execute(owner, '/hev skill list', [], signal))
-      .resolves.toMatchObject({ result: { kind: 'success', text: 'coding:\n- code-review (auto)' } })
+      .resolves.toMatchObject({ result: { kind: 'success', text: 'hev not activated' } })
+    await expect(ctx.commands.execute(owner, '/hev skill list --global', [], signal))
+      .resolves.toMatchObject({ result: { kind: 'success', text: 'global:\n- code-review\n- outside-skill' } })
     await expect(ctx.commands.execute(owner, '/hev skill list extra', [], signal))
       .resolves.toMatchObject({ result: { kind: 'error', text: expect.stringContaining('skill list') } })
+    await expect(ctx.commands.execute(owner, '/hev env list', [], signal))
+      .resolves.toMatchObject({
+        result: {
+          kind: 'success',
+          text: 'environments:\n- base (base rev 1)\n- coding (env_created rev 2)',
+        },
+      })
     await expect(ctx.commands.execute(owner, '/hev env create coding', [], signal))
       .resolves.toMatchObject({ result: { kind: 'success', text: 'environment created' } })
+    await expect(ctx.commands.execute(owner, '/hev skill add code-review --env coding', [], signal))
+      .resolves.toMatchObject({ result: { kind: 'error', text: expect.stringContaining('skill add') } })
     await expect(ctx.commands.execute(
       owner,
-      '/hev skill add code-review --env coding --policy off',
+      '/hev skill add code-review coding writing --policy off',
       [],
       signal,
     )).resolves.toMatchObject({ result: { kind: 'success', text: 'skill added to environment' } })
@@ -202,18 +238,32 @@ describe('@slimzeo/hev-dsh-plugin/hev-runtime', () => {
       .resolves.toMatchObject({ result: { kind: 'success', text: 'coding (env_created rev 2)' } })
     await expect(ctx.commands.execute(owner, '/hev env status', [], signal))
       .resolves.toMatchObject({ result: { kind: 'success', text: 'coding (env_created rev 2)' } })
+    await expect(ctx.commands.execute(owner, '/hev env quit', [], signal))
+      .resolves.toMatchObject({ result: { kind: 'success', text: 'base (base rev 1)' } })
+    await expect(ctx.commands.execute(owner, '/hev env status', [], signal))
+      .resolves.toMatchObject({ result: { kind: 'success', text: 'base (base rev 1)' } })
+    await expect(ctx.commands.execute(owner, '/hev skill list', [], signal))
+      .resolves.toMatchObject({ result: { kind: 'success', text: 'base: no skills configured' } })
+    await expect(ctx.commands.execute(owner, '/hev env quit', [], signal))
+      .resolves.toMatchObject({ result: { kind: 'success', text: 'hev not activated' } })
+    await expect(ctx.commands.execute(owner, '/hev env status', [], signal))
+      .resolves.toMatchObject({ result: { kind: 'success', text: 'hev not activated' } })
+    await expect(ctx.commands.execute(owner, '/hev env quit', [], signal))
+      .resolves.toMatchObject({ result: { kind: 'success', text: 'hev not activated' } })
     await expect(ctx.commands.execute(owner, '/hev env status extra', [], signal))
       .resolves.toMatchObject({ result: { kind: 'error', text: expect.stringContaining('env status') } })
     await expect(ctx.commands.execute(owner, '/hev env use coding writing', [], signal))
       .resolves.toMatchObject({ result: { kind: 'error', text: expect.stringContaining('env use <id-or-name>') } })
 
     expect(runner.mock.calls.map(call => call[1])).toEqual([
-      ['env', 'use', '--output', 'json'],
-      ['env', 'use', 'env_created', '--output', 'json'],
+      ['env', 'list', '--output', 'json'],
       ['env', 'create', 'coding', '--output', 'json'],
-      ['skill', 'add', 'code-review', '--env', 'coding', '--policy', 'off', '--output', 'json'],
+      ['skill', 'add', 'code-review', 'coding', 'writing', '--policy', 'off', '--output', 'json'],
       ['env', 'use', 'coding', '--output', 'json'],
       ['env', 'use', 'env_created', '--output', 'json'],
+      ['env', 'use', '--output', 'json'],
+      ['env', 'use', 'base', '--output', 'json'],
+      ['env', 'use', 'base', '--output', 'json'],
     ])
 
     await fiber.dispose()
@@ -252,6 +302,26 @@ describe('@slimzeo/hev-dsh-plugin/hev-runtime', () => {
       const runner: NativeCommandRunner = async () => ({ stdout: JSON.stringify(envelope), stderr: '' })
       const { runtime } = await world(runner)
       await expect(runtime.use(agent(Session.create(SessionId(crypto.randomUUID()))), 'coding', signal))
+        .rejects.toMatchObject({ statusCode: StatusCode.ProtocolError })
+    }
+  })
+
+  it('strictly rejects malformed Environment lists with protocol status 502', async () => {
+    const invalid: unknown[] = [
+      [],
+      [{ id: 'base', name: 'base', revision: 0 }],
+      [
+        { id: 'base', name: 'base', revision: 1 },
+        { id: 'base', name: 'coding', revision: 1 },
+      ],
+    ]
+    for (const environments of invalid) {
+      const runner: NativeCommandRunner = async () => ({
+        stdout: success('environments listed', { environments }),
+        stderr: '',
+      })
+      const client = new HevCliClient('hev-test', runner)
+      await expect(client.listEnvironments(signal))
         .rejects.toMatchObject({ statusCode: StatusCode.ProtocolError })
     }
   })

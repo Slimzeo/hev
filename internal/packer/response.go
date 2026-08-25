@@ -35,6 +35,10 @@ type addSkillData struct {
 	Environments     []environmentSummary   `json:"environments"`
 }
 
+type environmentListData struct {
+	Environments []environmentSummary `json:"environments"`
+}
+
 // WriteEnvironment writes a successful response containing one Environment.
 func WriteEnvironment(output io.Writer, message string, value model.Environment) error {
 	return write(output, BaseResponse{
@@ -64,6 +68,23 @@ func WriteSkillAdded(
 		Message:       "skill added to environment",
 		Prompt:        "",
 		Data:          addSkillData{EnvironmentSkill: binding, Environments: summaries},
+	})
+}
+
+// WriteEnvironmentList writes a successful response containing all Environments.
+func WriteEnvironmentList(output io.Writer, environments []model.Environment) error {
+	summaries := make([]environmentSummary, len(environments))
+	for index, environment := range environments {
+		summaries[index] = environmentSummary{
+			ID: environment.ID, Name: environment.Name, Revision: environment.Revision,
+		}
+	}
+	return write(output, BaseResponse{
+		SchemaVersion: responseSchemaVersion,
+		Code:          model.StatusCodeOK,
+		Message:       "environments listed",
+		Prompt:        "",
+		Data:          environmentListData{Environments: summaries},
 	})
 }
 

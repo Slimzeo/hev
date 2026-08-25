@@ -40,7 +40,7 @@ function environment(skills: Array<{ skillKey: string; kind: 'auto' | 'off' }>):
 }
 
 async function world(
-  current: (session: Session, signal?: AbortSignal) => Promise<Environment>,
+  current: (session: Session, signal?: AbortSignal) => Promise<Environment | undefined>,
 ) {
   const ctx = new Context()
   await ctx.plugin(AgentRegistry)
@@ -59,15 +59,14 @@ async function world(
 }
 
 describe('@slimzeo/hev-dsh-plugin/hev-skill-registry', () => {
-  it('keeps native views without an exact Agent and filters all reads through the current Environment', async () => {
+  it('filters active Sessions and leaves inactive Sessions unfiltered', async () => {
     const active = sessionAgent('active')
     const inactive = sessionAgent('inactive')
-    const base = environment([])
     let selected = environment([
       { skillKey: 'allowed-skill', kind: 'auto' },
       { skillKey: 'off-skill', kind: 'off' },
     ])
-    const { ctx, current } = await world(async session => session === active.session ? selected : base)
+    const { ctx, current } = await world(async session => session === active.session ? selected : undefined)
     ctx.agents.register(active)
     ctx.agents.register(inactive)
 
@@ -76,9 +75,17 @@ describe('@slimzeo/hev-dsh-plugin/hev-skill-registry', () => {
       'allowed-skill',
       'off-skill',
     ])
-    expect((await ctx.skills.list({ scope: inactive })).map(skill => skill.name)).toEqual([])
-
-    expect((await ctx.skills.snapshot({ scope: inactive })).skills).toEqual([])
+    expect((await ctx.skills.list({ scope: inactive })).map(skill => skill.name)).toEqual([
+      'absent-skill',
+      'allowed-skill',
+      'off-skill',
+    ])
+    expect((await ctx.skills.snapshot({ scope: inactive })).skills.map(skill => skill.name)).toEqual([
+      'absent-skill',
+      'allowed-skill',
+      'off-skill',
+    ])
+    expect(await ctx.skills.get('absent-skill', { scope: inactive })).toMatchObject({ name: 'absent-skill' })
 
     const signal = new AbortController().signal
     const view = { scope: active, signal }
@@ -87,6 +94,11 @@ describe('@slimzeo/hev-dsh-plugin/hev-skill-registry', () => {
     expect(await ctx.skills.get('off-skill', view)).toBeUndefined()
     expect(await ctx.skills.get('absent-skill', view)).toBeUndefined()
     expect(await ctx.skills.get('allowed-skill', view)).toMatchObject({ name: 'allowed-skill' })
+    expect((await ctx.skills.listAll(view)).map(skill => skill.name)).toEqual([
+      'absent-skill',
+      'allowed-skill',
+      'off-skill',
+    ])
 
     selected = environment([{ skillKey: 'off-skill', kind: 'auto' }])
     expect((await ctx.skills.list(view)).map(skill => skill.name)).toEqual(['off-skill'])

@@ -19,9 +19,10 @@ import (
 )
 
 const schemaVersion = 1
+const legacyBaseEnvironmentID model.EnvironmentID = "env_base"
 
 var baseEnvironment = model.Environment{
-	ID:       "env_base",
+	ID:       "base",
 	Name:     "base",
 	Revision: 1,
 	Skills:   []model.EnvironmentSkill{},
@@ -78,6 +79,25 @@ func (s *EnvironmentStore) Create(ctx context.Context, environment model.Environ
 // Default returns the current default Environment.
 func (s *EnvironmentStore) Default(ctx context.Context) (model.Environment, error) {
 	return s.GetByIDOrName(ctx, baseEnvironment.Name)
+}
+
+// List returns detached current Environment records ordered by name.
+func (s *EnvironmentStore) List(ctx context.Context) ([]model.Environment, error) {
+	var environments []model.Environment
+	err := s.withLockedFile(ctx, false, func(file *storeFile) error {
+		environments = make([]model.Environment, len(file.Environments))
+		for index, environment := range file.Environments {
+			environments[index] = model.Clone(environment)
+		}
+		sort.Slice(environments, func(i, j int) bool {
+			return environments[i].Name < environments[j].Name
+		})
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list environments: %w", err)
+	}
+	return environments, nil
 }
 
 // GetByIDOrName reads one current Environment by ID or name.
@@ -172,14 +192,14 @@ func (s *EnvironmentStore) withLockedFile(
 		}
 	}()
 
-	file, initialized, err := s.readFile()
+	file, dirty, err := s.readFile()
 	if err != nil {
 		return err
 	}
 	if err := operation(&file); err != nil {
 		return err
 	}
-	if !write && !initialized {
+	if !write && !dirty {
 		return nil
 	}
 	return s.writeFile(file)
@@ -211,6 +231,13 @@ func (s *EnvironmentStore) readFile() (storeFile, bool, error) {
 	if file.Environments == nil {
 		return storeFile{}, false, errors.New("decode store: environments must be an array")
 	}
+	dirty := false
+	for index := range file.Environments {
+		if file.Environments[index].ID == legacyBaseEnvironmentID && file.Environments[index].Name == baseEnvironment.Name {
+			file.Environments[index].ID = baseEnvironment.ID
+			dirty = true
+		}
+	}
 	seenIDs := make(map[model.EnvironmentID]struct{}, len(file.Environments))
 	seenNames := make(map[string]struct{}, len(file.Environments))
 	for _, environment := range file.Environments {
@@ -232,12 +259,11 @@ func (s *EnvironmentStore) readFile() (storeFile, bool, error) {
 		seenIDs[environment.ID] = struct{}{}
 		seenNames[environment.Name] = struct{}{}
 	}
-	initialized := false
 	if len(file.Environments) == 0 {
 		file.Environments = []model.Environment{model.Clone(baseEnvironment)}
-		initialized = true
+		dirty = true
 	}
-	return file, initialized, nil
+	return file, dirty, nil
 }
 
 func (s *EnvironmentStore) writeFile(file storeFile) error {

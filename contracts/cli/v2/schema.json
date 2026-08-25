@@ -4,6 +4,7 @@
   "title": "hev CLI response v2",
   "oneOf": [
     { "$ref": "#/$defs/createEnvironmentResponse" },
+    { "$ref": "#/$defs/listEnvironmentsResponse" },
     { "$ref": "#/$defs/addEnvironmentSkillResponse" },
     { "$ref": "#/$defs/useEnvironmentResponse" },
     { "$ref": "#/$defs/errorResponse" }
@@ -86,6 +87,25 @@
           "required": ["environmentSkill", "environments"],
           "properties": {
             "environmentSkill": { "$ref": "#/$defs/environmentSkill" },
+            "environments": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "$ref": "#/$defs/environmentSummary" }
+            }
+          }
+        }
+      }
+    },
+    "listEnvironmentsResponse": {
+      "$ref": "#/$defs/successBase",
+      "unevaluatedProperties": false,
+      "properties": {
+        "message": { "const": "environments listed" },
+        "data": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["environments"],
+          "properties": {
             "environments": {
               "type": "array",
               "minItems": 1,

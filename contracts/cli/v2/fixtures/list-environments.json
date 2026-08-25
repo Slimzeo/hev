@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 2,
+  "code": 200,
+  "message": "environments listed",
+  "prompt": "",
+  "data": {
+    "environments": [
+      {
+        "id": "base",
+        "name": "base",
+        "revision": 1
+      },
+      {
+        "id": "env_coding",
+        "name": "coding",
+        "revision": 2
+      }
+    ]
+  }
+}

@@ -54,3 +54,10 @@ export interface Environment {
   readonly skills: readonly EnvironmentSkillSpec[]
 }
 
+/** Current Environment metadata returned by `hev env list`. */
+export interface EnvironmentSummary {
+  readonly id: EnvironmentId
+  readonly name: string
+  readonly revision: number
+}
+

@@ -58,6 +58,7 @@ func NewRootCommand(environmentService *service.Service) *cobra.Command {
 
 	environmentCommand := &cobra.Command{Use: "env", Short: "Manage environments"}
 	environmentCommand.AddCommand(newCreateEnvironmentCommand(environmentService))
+	environmentCommand.AddCommand(newListEnvironmentCommand(environmentService))
 	environmentCommand.AddCommand(newUseEnvironmentCommand(environmentService))
 
 	skillCommand := &cobra.Command{Use: "skill", Short: "Manage environment skill bindings"}
@@ -65,6 +66,32 @@ func NewRootCommand(environmentService *service.Service) *cobra.Command {
 
 	root.AddCommand(environmentCommand, skillCommand)
 	return root
+}
+
+func newListEnvironmentCommand(environmentService *service.Service) *cobra.Command {
+	return &cobra.Command{
+		Use:   "list",
+		Short: "List environments",
+		Args:  exactArgs(0),
+		RunE: func(command *cobra.Command, _ []string) error {
+			if err := validateOutput(command); err != nil {
+				return err
+			}
+			environments, err := environmentService.List(command.Context())
+			if err != nil {
+				return err
+			}
+			if isJSONOutput(command) {
+				return packer.WriteEnvironmentList(command.OutOrStdout(), environments)
+			}
+			for _, environment := range environments {
+				if _, err := fmt.Fprintf(command.OutOrStdout(), "%s (%s rev %d)\n", environment.Name, environment.ID, environment.Revision); err != nil {
+					return err
+				}
+			}
+			return nil
+		},
+	}
 }
 
 func newCreateEnvironmentCommand(environmentService *service.Service) *cobra.Command {
@@ -90,12 +117,11 @@ func newCreateEnvironmentCommand(environmentService *service.Service) *cobra.Com
 }
 
 func newAddSkillCommand(environmentService *service.Service) *cobra.Command {
-	var environmentNames []string
 	var policy string
 	command := &cobra.Command{
-		Use:   "add <skill-key>",
+		Use:   "add <skill-key> <env-name> [env-name...]",
 		Short: "Add a skill to one or more environments",
-		Args:  exactArgs(1),
+		Args:  minimumArgs(2),
 		RunE: func(command *cobra.Command, args []string) error {
 			if err := validateOutput(command); err != nil {
 				return err
@@ -103,7 +129,7 @@ func newAddSkillCommand(environmentService *service.Service) *cobra.Command {
 			binding, environments, err := environmentService.AddSkill(
 				command.Context(),
 				model.Skill{Key: model.SkillKey(args[0])},
-				environmentNames,
+				args[1:],
 				model.EnvironmentSkillPolicy{Kind: model.SkillPolicyKind(policy)},
 			)
 			if err != nil {
@@ -117,7 +143,6 @@ func newAddSkillCommand(environmentService *service.Service) *cobra.Command {
 			return err
 		},
 	}
-	command.Flags().StringArrayVar(&environmentNames, "env", nil, "environment name (repeatable)")
 	command.Flags().StringVar(&policy, "policy", string(model.SkillPolicyAuto), "skill policy: auto or off")
 	return command
 }
@@ -162,6 +187,15 @@ func exactArgs(count int) cobra.PositionalArgs {
 func maximumArgs(count int) cobra.PositionalArgs {
 	return func(command *cobra.Command, args []string) error {
 		if err := cobra.MaximumNArgs(count)(command, args); err != nil {
+			return model.NewError(model.StatusCodeInvalidArgument, "%v", err)
+		}
+		return nil
+	}
+}
+
+func minimumArgs(count int) cobra.PositionalArgs {
+	return func(command *cobra.Command, args []string) error {
+		if err := cobra.MinimumNArgs(count)(command, args); err != nil {
 			return model.NewError(model.StatusCodeInvalidArgument, "%v", err)
 		}
 		return nil
