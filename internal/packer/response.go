@@ -6,40 +6,40 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/Slimzeo/hev/internal/domain/environment"
+	"github.com/Slimzeo/hev/internal/model"
 )
 
 const responseSchemaVersion = 2
 
 // BaseResponse is the stable hev CLI JSON response.
 type BaseResponse struct {
-	SchemaVersion int                    `json:"schemaVersion"`
-	Code          environment.StatusCode `json:"code"`
-	Message       string                 `json:"message"`
-	Prompt        string                 `json:"prompt"`
-	Data          any                    `json:"data"`
+	SchemaVersion int              `json:"schemaVersion"`
+	Code          model.StatusCode `json:"code"`
+	Message       string           `json:"message"`
+	Prompt        string           `json:"prompt"`
+	Data          any              `json:"data"`
 }
 
 type environmentData struct {
-	Environment environment.Environment `json:"environment"`
+	Environment model.Environment `json:"environment"`
 }
 
 type environmentSummary struct {
-	ID       environment.EnvironmentID `json:"id"`
-	Name     string                    `json:"name"`
-	Revision uint64                    `json:"revision"`
+	ID       model.EnvironmentID `json:"id"`
+	Name     string              `json:"name"`
+	Revision uint64              `json:"revision"`
 }
 
 type addSkillData struct {
-	EnvironmentSkill environment.EnvironmentSkillSpec `json:"environmentSkill"`
-	Environments     []environmentSummary             `json:"environments"`
+	EnvironmentSkill model.EnvironmentSkill `json:"environmentSkill"`
+	Environments     []environmentSummary   `json:"environments"`
 }
 
 // WriteEnvironment writes a successful response containing one Environment.
-func WriteEnvironment(output io.Writer, message string, value environment.Environment) error {
+func WriteEnvironment(output io.Writer, message string, value model.Environment) error {
 	return write(output, BaseResponse{
 		SchemaVersion: responseSchemaVersion,
-		Code:          environment.StatusCodeOK,
+		Code:          model.StatusCodeOK,
 		Message:       message,
 		Prompt:        "",
 		Data:          environmentData{Environment: value},
@@ -49,8 +49,8 @@ func WriteEnvironment(output io.Writer, message string, value environment.Enviro
 // WriteSkillAdded writes a successful response for one atomic Skill update.
 func WriteSkillAdded(
 	output io.Writer,
-	spec environment.EnvironmentSkillSpec,
-	environments []environment.Environment,
+	binding model.EnvironmentSkill,
+	environments []model.Environment,
 ) error {
 	summaries := make([]environmentSummary, len(environments))
 	for index, current := range environments {
@@ -60,10 +60,10 @@ func WriteSkillAdded(
 	}
 	return write(output, BaseResponse{
 		SchemaVersion: responseSchemaVersion,
-		Code:          environment.StatusCodeOK,
+		Code:          model.StatusCodeOK,
 		Message:       "skill added to environment",
 		Prompt:        "",
-		Data:          addSkillData{EnvironmentSkill: spec, Environments: summaries},
+		Data:          addSkillData{EnvironmentSkill: binding, Environments: summaries},
 	})
 }
 
@@ -71,9 +71,9 @@ func WriteSkillAdded(
 func WriteFailure(output io.Writer, err error) error {
 	statusCode, prompt := classifyError(err)
 	message := err.Error()
-	var environmentError *environment.Error
-	if errors.As(err, &environmentError) {
-		message = environmentError.Message
+	var domainError *model.Error
+	if errors.As(err, &domainError) {
+		message = domainError.Message
 	}
 	return write(output, BaseResponse{
 		SchemaVersion: responseSchemaVersion,
@@ -93,18 +93,18 @@ func write(output io.Writer, response BaseResponse) error {
 	return nil
 }
 
-func classifyError(err error) (environment.StatusCode, string) {
-	if statusCode, ok := environment.StatusCodeOf(err); ok {
+func classifyError(err error) (model.StatusCode, string) {
+	if statusCode, ok := model.StatusCodeOf(err); ok {
 		switch statusCode {
-		case environment.StatusCodeInvalidArgument:
+		case model.StatusCodeInvalidArgument:
 			return statusCode, "run hev --help to inspect command usage"
-		case environment.StatusCodeNotFound:
+		case model.StatusCodeNotFound:
 			return statusCode, "create the environment before using it"
-		case environment.StatusCodeConflict:
+		case model.StatusCodeConflict:
 			return statusCode, "inspect the existing environment configuration"
-		case environment.StatusCodeInternal:
+		case model.StatusCodeInternal:
 			return statusCode, "retry the command or inspect stderr diagnostics"
 		}
 	}
-	return environment.StatusCodeInternal, "retry the command or inspect stderr diagnostics"
+	return model.StatusCodeInternal, "retry the command or inspect stderr diagnostics"
 }

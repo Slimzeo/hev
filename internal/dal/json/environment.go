@@ -13,18 +13,18 @@ import (
 	"sort"
 	"time"
 
-	domain "github.com/Slimzeo/hev/internal/domain/environment"
+	"github.com/Slimzeo/hev/internal/model"
 	"github.com/gofrs/flock"
 	"github.com/natefinch/atomic"
 )
 
 const schemaVersion = 1
 
-var baseEnvironment = domain.Environment{
+var baseEnvironment = model.Environment{
 	ID:       "env_base",
 	Name:     "base",
 	Revision: 1,
-	Skills:   []domain.EnvironmentSkillSpec{},
+	Skills:   []model.EnvironmentSkill{},
 }
 
 // EnvironmentStore persists the current Environment records in one JSON file.
@@ -33,8 +33,8 @@ type EnvironmentStore struct {
 }
 
 type storeFile struct {
-	SchemaVersion int                  `json:"schemaVersion"`
-	Environments  []domain.Environment `json:"environments"`
+	SchemaVersion int                 `json:"schemaVersion"`
+	Environments  []model.Environment `json:"environments"`
 }
 
 // NewEnvironmentStore constructs a JSON-backed store at path.
@@ -43,56 +43,56 @@ func NewEnvironmentStore(path string) *EnvironmentStore {
 }
 
 // Create atomically inserts an Environment.
-func (s *EnvironmentStore) Create(ctx context.Context, environment domain.Environment) (domain.Environment, error) {
+func (s *EnvironmentStore) Create(ctx context.Context, environment model.Environment) (model.Environment, error) {
 	if err := environment.Validate(); err != nil {
-		return domain.Environment{}, err
+		return model.Environment{}, err
 	}
 	if environment.Revision != 1 {
-		return domain.Environment{}, domain.NewError(
-			domain.StatusCodeInvalidArgument,
+		return model.Environment{}, model.NewError(
+			model.StatusCodeInvalidArgument,
 			"new environment %q revision must be one",
 			environment.Name,
 		)
 	}
 
-	var created domain.Environment
+	var created model.Environment
 	err := s.withLockedFile(ctx, true, func(file *storeFile) error {
 		for _, existing := range file.Environments {
 			if existing.ID == environment.ID ||
 				existing.Name == environment.Name ||
 				string(existing.ID) == environment.Name ||
 				existing.Name == string(environment.ID) {
-				return domain.NewError(domain.StatusCodeConflict, "environment already exists: %s", environment.Name)
+				return model.NewError(model.StatusCodeConflict, "environment already exists: %s", environment.Name)
 			}
 		}
-		created = domain.Clone(environment)
+		created = model.Clone(environment)
 		file.Environments = append(file.Environments, created)
 		return nil
 	})
 	if err != nil {
-		return domain.Environment{}, fmt.Errorf("create environment: %w", err)
+		return model.Environment{}, fmt.Errorf("create environment: %w", err)
 	}
-	return domain.Clone(created), nil
+	return model.Clone(created), nil
 }
 
 // Default returns the current default Environment.
-func (s *EnvironmentStore) Default(ctx context.Context) (domain.Environment, error) {
+func (s *EnvironmentStore) Default(ctx context.Context) (model.Environment, error) {
 	return s.GetByIDOrName(ctx, baseEnvironment.Name)
 }
 
 // GetByIDOrName reads one current Environment by ID or name.
-func (s *EnvironmentStore) GetByIDOrName(ctx context.Context, identifier string) (domain.Environment, error) {
-	var environment domain.Environment
+func (s *EnvironmentStore) GetByIDOrName(ctx context.Context, identifier string) (model.Environment, error) {
+	var environment model.Environment
 	err := s.withLockedFile(ctx, false, func(file *storeFile) error {
 		stored, found := findEnvironment(file.Environments, identifier)
 		if !found {
-			return domain.NewError(domain.StatusCodeNotFound, "environment not found: %s", identifier)
+			return model.NewError(model.StatusCodeNotFound, "environment not found: %s", identifier)
 		}
-		environment = domain.Clone(stored)
+		environment = model.Clone(stored)
 		return nil
 	})
 	if err != nil {
-		return domain.Environment{}, fmt.Errorf("get environment: %w", err)
+		return model.Environment{}, fmt.Errorf("get environment: %w", err)
 	}
 	return environment, nil
 }
@@ -101,36 +101,36 @@ func (s *EnvironmentStore) GetByIDOrName(ctx context.Context, identifier string)
 func (s *EnvironmentStore) UpdateMany(
 	ctx context.Context,
 	identifiers []string,
-	update func([]domain.Environment) error,
-) ([]domain.Environment, error) {
-	var updated []domain.Environment
+	update func([]model.Environment) error,
+) ([]model.Environment, error) {
+	var updated []model.Environment
 	err := s.withLockedFile(ctx, true, func(file *storeFile) error {
 		indexes := make([]int, len(identifiers))
-		selected := make([]domain.Environment, len(identifiers))
-		seen := make(map[domain.EnvironmentID]struct{}, len(identifiers))
+		selected := make([]model.Environment, len(identifiers))
+		seen := make(map[model.EnvironmentID]struct{}, len(identifiers))
 		for requestedIndex, identifier := range identifiers {
 			storedIndex := environmentIndexByIDOrName(file.Environments, identifier)
 			if storedIndex < 0 {
-				return domain.NewError(domain.StatusCodeNotFound, "environment not found: %s", identifier)
+				return model.NewError(model.StatusCodeNotFound, "environment not found: %s", identifier)
 			}
 			if _, exists := seen[file.Environments[storedIndex].ID]; exists {
-				return domain.NewError(domain.StatusCodeInvalidArgument, "environment %q was supplied more than once", identifier)
+				return model.NewError(model.StatusCodeInvalidArgument, "environment %q was supplied more than once", identifier)
 			}
 			seen[file.Environments[storedIndex].ID] = struct{}{}
 			indexes[requestedIndex] = storedIndex
-			selected[requestedIndex] = domain.Clone(file.Environments[storedIndex])
+			selected[requestedIndex] = model.Clone(file.Environments[storedIndex])
 		}
 
 		if err := update(selected); err != nil {
 			return err
 		}
-		updated = make([]domain.Environment, len(indexes))
+		updated = make([]model.Environment, len(indexes))
 		for selectedIndex, storedIndex := range indexes {
 			previous := file.Environments[storedIndex]
 			next := selected[selectedIndex]
 			if next.ID != previous.ID || next.Name != previous.Name || next.Revision != previous.Revision {
-				return domain.NewError(
-					domain.StatusCodeInvalidArgument,
+				return model.NewError(
+					model.StatusCodeInvalidArgument,
 					"environment update cannot change id, name, or revision",
 				)
 			}
@@ -139,7 +139,7 @@ func (s *EnvironmentStore) UpdateMany(
 				return err
 			}
 			file.Environments[storedIndex] = next
-			updated[selectedIndex] = domain.Clone(next)
+			updated[selectedIndex] = model.Clone(next)
 		}
 		return nil
 	})
@@ -190,7 +190,7 @@ func (s *EnvironmentStore) readFile() (storeFile, bool, error) {
 	if errors.Is(err, fs.ErrNotExist) {
 		return storeFile{
 			SchemaVersion: schemaVersion,
-			Environments:  []domain.Environment{domain.Clone(baseEnvironment)},
+			Environments:  []model.Environment{model.Clone(baseEnvironment)},
 		}, true, nil
 	}
 	if err != nil {
@@ -211,7 +211,7 @@ func (s *EnvironmentStore) readFile() (storeFile, bool, error) {
 	if file.Environments == nil {
 		return storeFile{}, false, errors.New("decode store: environments must be an array")
 	}
-	seenIDs := make(map[domain.EnvironmentID]struct{}, len(file.Environments))
+	seenIDs := make(map[model.EnvironmentID]struct{}, len(file.Environments))
 	seenNames := make(map[string]struct{}, len(file.Environments))
 	for _, environment := range file.Environments {
 		if err := environment.Validate(); err != nil {
@@ -226,7 +226,7 @@ func (s *EnvironmentStore) readFile() (storeFile, bool, error) {
 		if _, exists := seenNames[string(environment.ID)]; exists {
 			return storeFile{}, false, fmt.Errorf("invalid store: environment id %q conflicts with an environment name", environment.ID)
 		}
-		if _, exists := seenIDs[domain.EnvironmentID(environment.Name)]; exists {
+		if _, exists := seenIDs[model.EnvironmentID(environment.Name)]; exists {
 			return storeFile{}, false, fmt.Errorf("invalid store: environment name %q conflicts with an environment id", environment.Name)
 		}
 		seenIDs[environment.ID] = struct{}{}
@@ -234,7 +234,7 @@ func (s *EnvironmentStore) readFile() (storeFile, bool, error) {
 	}
 	initialized := false
 	if len(file.Environments) == 0 {
-		file.Environments = []domain.Environment{domain.Clone(baseEnvironment)}
+		file.Environments = []model.Environment{model.Clone(baseEnvironment)}
 		initialized = true
 	}
 	return file, initialized, nil
@@ -255,16 +255,16 @@ func (s *EnvironmentStore) writeFile(file storeFile) error {
 	return nil
 }
 
-func findEnvironment(environments []domain.Environment, identifier string) (domain.Environment, bool) {
+func findEnvironment(environments []model.Environment, identifier string) (model.Environment, bool) {
 	for _, environment := range environments {
 		if string(environment.ID) == identifier || environment.Name == identifier {
 			return environment, true
 		}
 	}
-	return domain.Environment{}, false
+	return model.Environment{}, false
 }
 
-func environmentIndexByIDOrName(environments []domain.Environment, identifier string) int {
+func environmentIndexByIDOrName(environments []model.Environment, identifier string) int {
 	for index, environment := range environments {
 		if string(environment.ID) == identifier || environment.Name == identifier {
 			return index

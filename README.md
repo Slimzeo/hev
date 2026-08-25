@@ -14,12 +14,16 @@ The npm package includes the `hev` executable; users do not need Go or a separat
 ```text
 cmd/hev/main.go                         process startup and dependency assembly
 internal/handler/command.go             Cobra commands and argument handling
-internal/domain/environment/model.go    Environment model, policy, validation, and status errors
-internal/domain/environment/service.go  Environment operations and the Store dependency they require
+internal/model/
+  environment.go                       Environment aggregate, validation, and status errors
+  skill.go                             Skill entity, Environment-Skill relation, and policy
+internal/service/
+  environment.go                       Environment create and resolve operations plus Store interface
+  skill.go                             Add a Skill to one or more Environments
 internal/dal/json/environment.go        locked JSON persistence and atomic replacement
 internal/packer/response.go             domain results and errors to CLI v2 JSON
 contracts/cli/v2/                       process protocol schema and fixtures
 test/hev_test.go                        Go Core tests
 ```
 
-The dependency direction is `main -> handler -> domain/environment`; `dal/json` implements the Store required by the Environment service, and `packer` owns only CLI response conversion. Host-specific DSH types stay under `adapter/dsh`.
+The dependency direction is `main -> handler -> service -> model`; `dal/json` implements the Store required by the Environment service, and `packer` owns only CLI response conversion. Host-specific DSH types stay under `adapter/dsh`.

@@ -155,7 +155,7 @@ describe('@slimzeo/hev-dsh-plugin/hev-runtime', () => {
     expect((await runtime.current(owner.session, signal)).revision).toBe(5)
   })
 
-  it('forwards the three supported /hev operations with fixed JSON argv', async () => {
+  it('forwards the supported /hev operations and reports the current Session Environment', async () => {
     const runner = vi.fn<NativeCommandRunner>(async (_command, args) => {
       if (args[0] === 'env' && args[1] === 'create') {
         return {
@@ -184,6 +184,12 @@ describe('@slimzeo/hev-dsh-plugin/hev-runtime', () => {
     const fiber = await ctx.plugin(TestEnvironmentController)
     const owner = agent(Session.create(SessionId('commands')))
 
+    await expect(ctx.commands.execute(owner, '/hev env status', [], signal))
+      .resolves.toMatchObject({ result: { kind: 'success', text: 'coding (env_created rev 2)' } })
+    await expect(ctx.commands.execute(owner, '/hev skill list', [], signal))
+      .resolves.toMatchObject({ result: { kind: 'success', text: 'coding:\n- code-review (auto)' } })
+    await expect(ctx.commands.execute(owner, '/hev skill list extra', [], signal))
+      .resolves.toMatchObject({ result: { kind: 'error', text: expect.stringContaining('skill list') } })
     await expect(ctx.commands.execute(owner, '/hev env create coding', [], signal))
       .resolves.toMatchObject({ result: { kind: 'success', text: 'environment created' } })
     await expect(ctx.commands.execute(
@@ -193,14 +199,21 @@ describe('@slimzeo/hev-dsh-plugin/hev-runtime', () => {
       signal,
     )).resolves.toMatchObject({ result: { kind: 'success', text: 'skill added to environment' } })
     await expect(ctx.commands.execute(owner, '/hev env use coding', [], signal))
-      .resolves.toMatchObject({ result: { kind: 'success' } })
+      .resolves.toMatchObject({ result: { kind: 'success', text: 'coding (env_created rev 2)' } })
+    await expect(ctx.commands.execute(owner, '/hev env status', [], signal))
+      .resolves.toMatchObject({ result: { kind: 'success', text: 'coding (env_created rev 2)' } })
+    await expect(ctx.commands.execute(owner, '/hev env status extra', [], signal))
+      .resolves.toMatchObject({ result: { kind: 'error', text: expect.stringContaining('env status') } })
     await expect(ctx.commands.execute(owner, '/hev env use coding writing', [], signal))
       .resolves.toMatchObject({ result: { kind: 'error', text: expect.stringContaining('env use <id-or-name>') } })
 
     expect(runner.mock.calls.map(call => call[1])).toEqual([
+      ['env', 'use', '--output', 'json'],
+      ['env', 'use', 'env_created', '--output', 'json'],
       ['env', 'create', 'coding', '--output', 'json'],
       ['skill', 'add', 'code-review', '--env', 'coding', '--policy', 'off', '--output', 'json'],
       ['env', 'use', 'coding', '--output', 'json'],
+      ['env', 'use', 'env_created', '--output', 'json'],
     ])
 
     await fiber.dispose()

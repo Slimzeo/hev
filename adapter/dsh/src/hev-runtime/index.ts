@@ -41,7 +41,7 @@ interface RuntimeDependencies {
   readonly runner?: NativeCommandRunner
 }
 
-const USAGE = 'usage: /hev env create <name> | skill add <skill-key> --env <name> [--env <name>...] [--policy auto|off] | env use <id-or-name>'
+const USAGE = 'usage: /hev env create <name> | env use <id-or-name> | env status | skill add <skill-key> --env <name> [--env <name>...] [--policy auto|off] | skill list'
 
 /** Owns live Environment selection and the optional `/hev` command. */
 export class EnvironmentController extends Service {
@@ -68,7 +68,7 @@ export class EnvironmentController extends Service {
       commandCtx.commands.register({
         name: 'hev',
         description: 'Manage skill environments',
-        input: { hint: 'env create | skill add | env use' },
+        input: { hint: 'env create | env use | env status | skill add | skill list' },
         handler: async ({ agent, rawInput, signal }) => {
           try {
             const words = rawInput.trim().split(/\s+/u).filter(word => word.length > 0)
@@ -122,6 +122,25 @@ export class EnvironmentController extends Service {
     words: readonly string[],
     signal: AbortSignal,
   ): Promise<{ kind: 'success'; text?: string } | { kind: 'error'; text: string }> {
+    if (words[0] === 'skill' && words[1] === 'list' && words.length === 2) {
+      const environment = await this.current(agent.session, signal)
+      return {
+        kind: 'success',
+        text: environment.skills.length === 0
+          ? `${environment.name}: no skills configured`
+          : [
+              `${environment.name}:`,
+              ...environment.skills.map(skill => `- ${skill.skillKey} (${skill.policy.kind})`),
+            ].join('\n'),
+      }
+    }
+    if (words[0] === 'env' && words[1] === 'status' && words.length === 2) {
+      const environment = await this.current(agent.session, signal)
+      return {
+        kind: 'success',
+        text: `${environment.name} (${environment.id} rev ${String(environment.revision)})`,
+      }
+    }
     if (words[0] === 'env' && words[1] === 'use') {
       const name = words[2]
       if (words.length !== 3 || name === undefined || name.startsWith('-')) {

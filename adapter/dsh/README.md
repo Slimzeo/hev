@@ -34,10 +34,12 @@ The MVP supports exactly these commands:
 ```text
 /hev env create <name>
 /hev skill add <skill-key> --env <name> [--env <name>...] [--policy auto|off]
+/hev skill list
 /hev env use <id-or-name>
+/hev env status
 ```
 
-Selection is process-local and keyed by the exact live DSH `Session` object. Every live Session has exactly one current Environment. A Session with no explicit `use` starts from the ordinary empty `base` Environment. The Go Store automatically persists that `env_base`, revision `1`, `skills: []` record when its file is missing or contains an empty `environments` array. The runtime stores one canonical Environment ID, then resolves it again on each Skill read so Environment changes use the latest current record. `env use` never composes Environments; repeated `--env` on `skill add` remains valid because it mutates several Environment configurations without selecting them.
+Selection is process-local and keyed by the exact live DSH `Session` object. Every live Session has exactly one current Environment. A Session with no explicit `use` starts from the ordinary empty `base` Environment. `/hev env status` reports that exact Session's current Environment without changing it; `/hev skill list` reports every Skill configured in that Environment, including `off` entries. The Go Store automatically persists that `env_base`, revision `1`, `skills: []` record when its file is missing or contains an empty `environments` array. The runtime stores one canonical Environment ID, then resolves it again on each Skill read so Environment changes use the latest current record. `env use` never composes Environments; repeated `--env` on `skill add` remains valid because it mutates several Environment configurations without selecting them.
 
 The Skill Registry entry keeps DSH provider discovery, winner selection, validation, and Skill loading unchanged. An exact live Agent sees only native winners whose key has `policy.kind === 'auto'` in its current Environment; `off` and unlisted keys are unavailable through `list()`, `snapshot()`, and `get()`. Only a read without an exact live Agent scope keeps the native view. A configured hev key that has no native winner remains hidden but does not make `use` fail.
 

@@ -7,8 +7,9 @@ import (
 	"path/filepath"
 
 	jsonstore "github.com/Slimzeo/hev/internal/dal/json"
-	"github.com/Slimzeo/hev/internal/domain/environment"
 	"github.com/Slimzeo/hev/internal/handler"
+	"github.com/Slimzeo/hev/internal/model"
+	environmentservice "github.com/Slimzeo/hev/internal/service"
 	"github.com/google/uuid"
 )
 
@@ -20,8 +21,8 @@ func main() {
 	}
 
 	store := jsonstore.NewEnvironmentStore(filepath.Join(home, ".hev", "environments.json"))
-	service := environment.NewService(store, func() environment.EnvironmentID {
-		return environment.EnvironmentID("env_" + uuid.NewString())
+	environmentService := environmentservice.New(store, func() model.EnvironmentID {
+		return model.EnvironmentID("env_" + uuid.NewString())
 	})
-	os.Exit(handler.Execute(context.Background(), service, os.Stdout, os.Stderr, os.Args[1:]))
+	os.Exit(handler.Execute(context.Background(), environmentService, os.Stdout, os.Stderr, os.Args[1:]))
 }

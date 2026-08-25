@@ -1,4 +1,4 @@
-package environment
+package model
 
 import (
 	"errors"
@@ -20,7 +20,7 @@ const (
 	StatusCodeInternal        StatusCode = 500
 )
 
-// Error reports an environment failure with a numeric status.
+// Error reports an Environment domain failure with a numeric status.
 type Error struct {
 	StatusCode StatusCode
 	Message    string
@@ -30,75 +30,35 @@ func (e *Error) Error() string {
 	return e.Message
 }
 
-// NewError constructs an environment error with a numeric status.
+// NewError constructs an Environment domain error with a numeric status.
 func NewError(statusCode StatusCode, format string, args ...any) error {
 	return &Error{StatusCode: statusCode, Message: fmt.Sprintf(format, args...)}
 }
 
 // StatusCodeOf returns the numeric status carried by err.
 func StatusCodeOf(err error) (StatusCode, bool) {
-	var environmentError *Error
-	if !errors.As(err, &environmentError) {
+	var domainError *Error
+	if !errors.As(err, &domainError) {
 		return 0, false
 	}
-	return environmentError.StatusCode, true
+	return domainError.StatusCode, true
 }
 
 // EnvironmentID is the stable identifier of an Environment.
 type EnvironmentID string
 
-// SkillKey is hev's host-neutral identifier for a Skill.
-type SkillKey string
-
-// SkillPolicyKind selects how a Skill is exposed inside one Environment.
-type SkillPolicyKind string
-
-const (
-	SkillPolicyAuto SkillPolicyKind = "auto"
-	SkillPolicyOff  SkillPolicyKind = "off"
-)
-
-// EnvironmentSkillPolicy is the Environment-specific policy for one Skill.
-type EnvironmentSkillPolicy struct {
-	Kind SkillPolicyKind `json:"kind"`
-}
-
-// Validate rejects policy values not implemented by hev.
-func (p EnvironmentSkillPolicy) Validate() error {
-	switch p.Kind {
-	case SkillPolicyAuto, SkillPolicyOff:
-		return nil
-	default:
-		return NewError(StatusCodeInvalidArgument, "unsupported skill policy: %s", p.Kind)
-	}
-}
-
-// EnvironmentSkillSpec describes how an Environment exposes one Skill.
-type EnvironmentSkillSpec struct {
-	SkillKey SkillKey               `json:"skillKey"`
-	Policy   EnvironmentSkillPolicy `json:"policy"`
-}
-
 // Environment is the persisted aggregate managed by hev.
 type Environment struct {
-	ID       EnvironmentID          `json:"id"`
-	Name     string                 `json:"name"`
-	Revision uint64                 `json:"revision"`
-	Skills   []EnvironmentSkillSpec `json:"skills"`
+	ID       EnvironmentID      `json:"id"`
+	Name     string             `json:"name"`
+	Revision uint64             `json:"revision"`
+	Skills   []EnvironmentSkill `json:"skills"`
 }
 
 // ValidateName applies the public Environment name grammar.
 func ValidateName(name string) error {
 	if !keyPattern.MatchString(name) {
 		return NewError(StatusCodeInvalidArgument, "invalid environment name %q: use lowercase kebab-case", name)
-	}
-	return nil
-}
-
-// ValidateSkillKey applies the host-neutral Skill key grammar.
-func ValidateSkillKey(key SkillKey) error {
-	if !keyPattern.MatchString(string(key)) {
-		return NewError(StatusCodeInvalidArgument, "invalid skill key %q: use lowercase kebab-case", key)
 	}
 	return nil
 }
@@ -120,7 +80,7 @@ func (e Environment) Validate() error {
 
 	seen := make(map[SkillKey]struct{}, len(e.Skills))
 	for _, skill := range e.Skills {
-		if err := ValidateSkillKey(skill.SkillKey); err != nil {
+		if err := (Skill{Key: skill.SkillKey}).Validate(); err != nil {
 			return err
 		}
 		if err := skill.Policy.Validate(); err != nil {
@@ -136,7 +96,7 @@ func (e Environment) Validate() error {
 
 // Clone returns a copy whose Skill slice does not alias the source.
 func Clone(value Environment) Environment {
-	skills := make([]EnvironmentSkillSpec, len(value.Skills))
+	skills := make([]EnvironmentSkill, len(value.Skills))
 	copy(skills, value.Skills)
 	value.Skills = skills
 	return value
