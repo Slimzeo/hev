@@ -4,6 +4,7 @@ hev groups native agent Skills into selectable Environments. A live Session may 
 
 ```bash
 npx @deepseek-ai/dsh plugin --profile web add @slimzeo/hev-dsh-plugin@latest
+# npx @deepseek-ai/dsh plugin --profile web add /Users/bytedance/workspace/other-project/hev/adapter/dsh
 npx @deepseek-ai/dsh web
 ```
 
