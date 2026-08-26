@@ -20,7 +20,7 @@ import type {
 import type { Environment } from '../hev-runtime/index.ts'
 
 const hevGuideName = 'hev-guide'
-const hevGuideDescription = 'Guide users through Hev skill environments, distinguish the current environment from all DSH-discoverable Skills, find suitable Skills, and add them to the active environment. Use when the user asks what Hev is, which environment or Skills are active, why a discovered Skill is unavailable, how to find or enable a Skill, or how to configure the hev plugin.'
+const hevGuideDescription = 'Guide users through hev skill environments, distinguish the current environment from all DSH-discoverable Skills, find suitable Skills, and add them to the active environment. Use when the user asks what hev is, which environment or Skills are active, why a discovered Skill is unavailable, how to find or enable a Skill, or how to configure the hev plugin.'
 const hevGuideUrl = new URL('../../skills/hev-guide/SKILL.md', import.meta.url)
 const hevGuideResourceBase = {
   kind: 'directory',

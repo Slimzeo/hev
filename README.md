@@ -13,17 +13,27 @@ The npm package includes the `hev` executable; users do not need Go or a separat
 
 ```text
 cmd/hev/main.go                         process startup and dependency assembly
-internal/handler/command.go             Cobra commands and argument handling
+internal/routers/
+  base.go                               Cobra root initialization and execution
+  hev.go                                env and skill command registration
+internal/handler/
+  environment.go                       env create, list, and use handlers
+  skill.go                             skill add handler
 internal/model/
-  environment.go                       Environment aggregate, validation, and status errors
-  skill.go                             Skill entity, Environment-Skill relation, and policy
+  environment.go                       Environment data structures
+  skill.go                             Skill and Environment-Skill data structures
 internal/service/
   environment.go                       Environment create, list, and resolve operations plus Store interface
   skill.go                             Add a Skill to one or more Environments
-internal/dal/json/environment.go        locked JSON persistence and atomic replacement
-internal/packer/response.go             domain results and errors to CLI v2 JSON
+internal/dal/environment.go             locked Environment persistence and atomic replacement
+internal/common/response/               classified application errors and CLI status values
+internal/common/utils.go                shared Cobra argument and output helpers
+internal/constants/common.go            fixed CLI, store, and validation values
+internal/packer/
+  environment.go                       Environment CLI output packing
+  skill.go                             Skill CLI output packing
 contracts/cli/v2/                       process protocol schema and fixtures
 test/hev_test.go                        Go Core tests
 ```
 
-The dependency direction is `main -> handler -> service -> model`; `dal/json` implements the Store required by the Environment service, and `packer` owns only CLI response conversion. Host-specific DSH types stay under `adapter/dsh`.
+The command path is `main -> routers -> handler -> service -> model`; `main` injects `dal.EnvironmentDAL` through the Store interface, and `packer` owns only CLI response conversion. Host-specific DSH types stay under `adapter/dsh`.

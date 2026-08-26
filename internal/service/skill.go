@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 
+	commonresponse "github.com/Slimzeo/hev/internal/common/response"
+	"github.com/Slimzeo/hev/internal/constants"
 	"github.com/Slimzeo/hev/internal/model"
 )
 
@@ -14,23 +16,42 @@ func (s *Service) AddSkill(
 	environmentNames []string,
 	policy model.EnvironmentSkillPolicy,
 ) (model.EnvironmentSkill, []model.Environment, error) {
-	if err := skill.Validate(); err != nil {
-		return model.EnvironmentSkill{}, nil, err
+	if !keyPattern.MatchString(string(skill.Key)) {
+		return model.EnvironmentSkill{}, nil, commonresponse.NewError(
+			commonresponse.StatusCodeInvalidArgument,
+			"invalid skill key %q: use lowercase kebab-case",
+			skill.Key,
+		)
 	}
 	if len(environmentNames) == 0 {
-		return model.EnvironmentSkill{}, nil, model.NewError(model.StatusCodeInvalidArgument, "at least one environment is required")
+		return model.EnvironmentSkill{}, nil, commonresponse.NewError(
+			commonresponse.StatusCodeInvalidArgument,
+			"at least one environment is required",
+		)
 	}
-	if err := policy.Validate(); err != nil {
-		return model.EnvironmentSkill{}, nil, err
+	if policy.Kind != constants.SkillPolicyAuto && policy.Kind != constants.SkillPolicyOff {
+		return model.EnvironmentSkill{}, nil, commonresponse.NewError(
+			commonresponse.StatusCodeInvalidArgument,
+			"unsupported skill policy: %s",
+			policy.Kind,
+		)
 	}
 
 	seen := make(map[string]struct{}, len(environmentNames))
 	for _, name := range environmentNames {
-		if err := model.ValidateName(name); err != nil {
-			return model.EnvironmentSkill{}, nil, err
+		if !keyPattern.MatchString(name) {
+			return model.EnvironmentSkill{}, nil, commonresponse.NewError(
+				commonresponse.StatusCodeInvalidArgument,
+				"invalid environment name %q: use lowercase kebab-case",
+				name,
+			)
 		}
 		if _, exists := seen[name]; exists {
-			return model.EnvironmentSkill{}, nil, model.NewError(model.StatusCodeInvalidArgument, "environment %q was supplied more than once", name)
+			return model.EnvironmentSkill{}, nil, commonresponse.NewError(
+				commonresponse.StatusCodeInvalidArgument,
+				"environment %q was supplied more than once",
+				name,
+			)
 		}
 		seen[name] = struct{}{}
 	}
@@ -40,8 +61,8 @@ func (s *Service) AddSkill(
 		for _, current := range environments {
 			for _, existing := range current.Skills {
 				if existing.SkillKey == binding.SkillKey {
-					return model.NewError(
-						model.StatusCodeConflict,
+					return commonresponse.NewError(
+						commonresponse.StatusCodeConflict,
 						"skill %q is already bound to environment %q",
 						binding.SkillKey, current.Name,
 					)

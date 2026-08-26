@@ -3,9 +3,15 @@ package service
 import (
 	"context"
 	"fmt"
+	"regexp"
+	"strings"
 
+	commonresponse "github.com/Slimzeo/hev/internal/common/response"
+	"github.com/Slimzeo/hev/internal/constants"
 	"github.com/Slimzeo/hev/internal/model"
 )
+
+var keyPattern = regexp.MustCompile(constants.KebabCasePattern)
 
 // Store persists the current Environment records used by Service.
 type Store interface {
@@ -32,17 +38,28 @@ func New(store Store, newID IDGenerator) *Service {
 
 // Create creates an Environment with the default guide Skill at revision one.
 func (s *Service) Create(ctx context.Context, name string) (model.Environment, error) {
-	if err := model.ValidateName(name); err != nil {
-		return model.Environment{}, err
+	if !keyPattern.MatchString(name) {
+		return model.Environment{}, commonresponse.NewError(
+			commonresponse.StatusCodeInvalidArgument,
+			"invalid environment name %q: use lowercase kebab-case",
+			name,
+		)
+	}
+	id := s.newID()
+	if strings.TrimSpace(string(id)) == "" {
+		return model.Environment{}, commonresponse.NewError(
+			commonresponse.StatusCodeInvalidArgument,
+			"environment id must not be empty",
+		)
 	}
 	created := model.Environment{
-		ID:       s.newID(),
+		ID:       id,
 		Name:     name,
 		Revision: 1,
-		Skills:   []model.EnvironmentSkill{model.DefaultGuideBinding()},
-	}
-	if err := created.Validate(); err != nil {
-		return model.Environment{}, err
+		Skills: []model.EnvironmentSkill{{
+			SkillKey: constants.DefaultGuideSkillKey,
+			Policy:   model.EnvironmentSkillPolicy{Kind: constants.SkillPolicyAuto},
+		}},
 	}
 	return s.store.Create(ctx, created)
 }
@@ -68,7 +85,10 @@ func (s *Service) List(ctx context.Context) ([]model.Environment, error) {
 // Resolve returns the latest Environment for an ID or name.
 func (s *Service) Resolve(ctx context.Context, identifier string) (model.Environment, error) {
 	if identifier == "" {
-		return model.Environment{}, model.NewError(model.StatusCodeInvalidArgument, "environment identifier must not be empty")
+		return model.Environment{}, commonresponse.NewError(
+			commonresponse.StatusCodeInvalidArgument,
+			"environment identifier must not be empty",
+		)
 	}
 
 	current, err := s.store.GetByIDOrName(ctx, identifier)

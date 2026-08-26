@@ -1,11 +1,11 @@
 ---
 name: hev-guide
-description: Guide users through Hev skill environments, distinguish the current environment from all DSH-discoverable Skills, find suitable Skills, and add them to the active environment. Use when the user asks what Hev is, which environment or Skills are active, why a discovered Skill is unavailable, how to find or enable a Skill, or how to configure the hev plugin.
+description: Guide users through hev skill environments, distinguish the current environment from all DSH-discoverable Skills, find suitable Skills, and add them to the active environment. Use when the user asks what hev is, which environment or Skills are active, why a discovered Skill is unavailable, how to find or enable a Skill, or how to configure the hev plugin.
 ---
 
-# Hev Guide
+# hev guide
 
-Treat each Hev environment as an allowlist over the DSH Skill catalog. A Skill may be installed and globally discoverable without being enabled in the current environment.
+Treat each hev environment as an allowlist over the DSH Skill catalog. A Skill may be installed and globally discoverable without being enabled in the current environment.
 
 The `base` Environment and every Environment created by hev include this guide with the `auto` policy.
 
@@ -13,10 +13,10 @@ The `base` Environment and every Environment created by hev include this guide w
 
 Use these commands and keep their meanings separate:
 
-- `/hev env status` — show the Hev environment selected by this Session.
+- `/hev env status` — show the hev environment selected by this Session.
 - `/hev skill list` — show bindings in that environment, including `auto` and `off` policies.
 
-Do not infer current availability only from files under `~/.dsh/skills`. Files show installation; the current Hev binding controls whether the session catalog can expose them.
+Do not infer current availability only from files under `~/.dsh/skills`. Files show installation; the current hev binding controls whether the session catalog can expose them.
 
 ## Find DSH-discoverable Skills
 
@@ -43,7 +43,7 @@ Clearly label this as the DSH-discoverable set, not the current environment's en
 4. Add the selected Skill:
 
    ```text
-   /hev skill add <skill-name> --env <environment-name> --policy auto
+   /hev skill add <skill-name> <environment-name> --policy auto
    ```
 
 5. Verify with `/hev skill list`. On the next agent turn, confirm that the Skill appears in the session catalog and load it before use.
@@ -57,7 +57,7 @@ If slash commands cannot be executed from the current model/tool surface, give t
 ## Explain common states
 
 - Installed + globally discoverable + bound as `auto`: available in the current Session.
-- Installed + globally discoverable + unbound: hidden by Hev; add it to the environment.
+- Installed + globally discoverable + unbound: hidden by hev; add it to the environment.
 - Bound as `off`: intentionally hidden; do not describe it as enabled.
 - Bound but absent from DSH discovery and the session catalog: configuration exists, but DSH has no usable Skill definition. Install or repair the Skill first.
 - Different Sessions may select different environments. Always inspect the current Session instead of assuming another Session's selection.

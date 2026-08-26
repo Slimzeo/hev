@@ -12,14 +12,16 @@ import (
 	"strings"
 	"testing"
 
-	jsonstore "github.com/Slimzeo/hev/internal/dal/json"
-	"github.com/Slimzeo/hev/internal/handler"
+	commonresponse "github.com/Slimzeo/hev/internal/common/response"
+	"github.com/Slimzeo/hev/internal/constants"
+	"github.com/Slimzeo/hev/internal/dal"
 	"github.com/Slimzeo/hev/internal/model"
+	"github.com/Slimzeo/hev/internal/routers"
 	environmentservice "github.com/Slimzeo/hev/internal/service"
 	"github.com/santhosh-tekuri/jsonschema/v6"
 )
 
-var _ environmentservice.Store = (*jsonstore.EnvironmentStore)(nil)
+var _ environmentservice.Store = (*dal.EnvironmentDAL)(nil)
 
 type testResponse struct {
 	SchemaVersion int             `json:"schemaVersion"`
@@ -29,70 +31,18 @@ type testResponse struct {
 	Data          json.RawMessage `json:"data"`
 }
 
-func TestSkillValidate(t *testing.T) {
-	tests := []struct {
-		name       string
-		skill      model.Skill
-		wantStatus model.StatusCode
-	}{
-		{name: "valid Skill", skill: model.Skill{Key: "search"}},
-		{name: "empty key", skill: model.Skill{}, wantStatus: model.StatusCodeInvalidArgument},
-		{name: "invalid key", skill: model.Skill{Key: "Bad Skill"}, wantStatus: model.StatusCodeInvalidArgument},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			requireStatus(t, test.skill.Validate(), test.wantStatus)
-		})
-	}
-}
-
-func TestEnvironmentValidate(t *testing.T) {
-	valid := testEnvironment(
-		"env-1",
-		"alpha-env",
-		1,
-		model.EnvironmentSkill{
-			SkillKey: "search",
-			Policy:   model.EnvironmentSkillPolicy{Kind: model.SkillPolicyAuto},
-		},
-	)
-	tests := []struct {
-		name       string
-		value      model.Environment
-		wantStatus model.StatusCode
-	}{
-		{name: "valid aggregate", value: valid},
-		{name: "empty id", value: replaceEnvironment(valid, func(value *model.Environment) { value.ID = " \t" }), wantStatus: model.StatusCodeInvalidArgument},
-		{name: "invalid name", value: replaceEnvironment(valid, func(value *model.Environment) { value.Name = "Alpha_Env" }), wantStatus: model.StatusCodeInvalidArgument},
-		{name: "zero revision", value: replaceEnvironment(valid, func(value *model.Environment) { value.Revision = 0 }), wantStatus: model.StatusCodeInvalidArgument},
-		{name: "nil skills", value: replaceEnvironment(valid, func(value *model.Environment) { value.Skills = nil }), wantStatus: model.StatusCodeInvalidArgument},
-		{name: "invalid skill key", value: replaceEnvironment(valid, func(value *model.Environment) { value.Skills[0].SkillKey = "Bad Skill" }), wantStatus: model.StatusCodeInvalidArgument},
-		{name: "unsupported policy", value: replaceEnvironment(valid, func(value *model.Environment) { value.Skills[0].Policy.Kind = "always" }), wantStatus: model.StatusCodeInvalidArgument},
-		{name: "duplicate skill", value: replaceEnvironment(valid, func(value *model.Environment) {
-			value.Skills = append(value.Skills, value.Skills[0])
-		}), wantStatus: model.StatusCodeInvalidArgument},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			requireStatus(t, test.value.Validate(), test.wantStatus)
-		})
-	}
-}
-
 func TestEnvironmentServiceCreate(t *testing.T) {
 	tests := []struct {
 		name        string
 		envName     string
 		generatedID model.EnvironmentID
-		wantStatus  model.StatusCode
+		wantStatus  commonresponse.StatusCode
 		wantIDCalls int
 		wantCreates int
 	}{
 		{name: "creates revision one with the guide Skill", envName: "alpha-env", generatedID: "env-1", wantIDCalls: 1, wantCreates: 1},
-		{name: "rejects invalid name before generating id", envName: "Alpha Env", generatedID: "env-1", wantStatus: model.StatusCodeInvalidArgument},
-		{name: "rejects empty generated id before persistence", envName: "alpha-env", generatedID: "", wantStatus: model.StatusCodeInvalidArgument, wantIDCalls: 1},
+		{name: "rejects invalid name before generating id", envName: "Alpha Env", generatedID: "env-1", wantStatus: commonresponse.StatusCodeInvalidArgument},
+		{name: "rejects empty generated id before persistence", envName: "alpha-env", generatedID: "", wantStatus: commonresponse.StatusCodeInvalidArgument, wantIDCalls: 1},
 	}
 
 	for _, test := range tests {
@@ -116,7 +66,7 @@ func TestEnvironmentServiceCreate(t *testing.T) {
 				return
 			}
 
-			want := testEnvironment(test.generatedID, test.envName, 1, model.DefaultGuideBinding())
+			want := testEnvironment(test.generatedID, test.envName, 1, defaultGuideBinding())
 			if !reflect.DeepEqual(store.createCalls[0], want) || !reflect.DeepEqual(created, want) {
 				t.Fatalf("created=%#v persisted=%#v, want %#v", created, store.createCalls[0], want)
 			}
@@ -140,7 +90,7 @@ func TestEnvironmentServiceCreate(t *testing.T) {
 }
 
 func TestEnvironmentServiceAddSkill(t *testing.T) {
-	auto := model.EnvironmentSkillPolicy{Kind: model.SkillPolicyAuto}
+	auto := model.EnvironmentSkillPolicy{Kind: constants.SkillPolicyAuto}
 
 	t.Run("validates before persistence", func(t *testing.T) {
 		tests := []struct {
@@ -160,7 +110,7 @@ func TestEnvironmentServiceAddSkill(t *testing.T) {
 				store := &stubEnvironmentStore{}
 				service := environmentservice.New(store, func() model.EnvironmentID { return "unused" })
 				_, _, err := service.AddSkill(context.Background(), model.Skill{Key: test.skillKey}, test.environmentNames, test.policy)
-				requireStatus(t, err, model.StatusCodeInvalidArgument)
+				requireStatus(t, err, commonresponse.StatusCodeInvalidArgument)
 				if len(store.updateManyCalls) != 0 {
 					t.Fatalf("store UpdateMany called %d times", len(store.updateManyCalls))
 				}
@@ -210,7 +160,7 @@ func TestEnvironmentServiceAddSkill(t *testing.T) {
 		service := environmentservice.New(store, func() model.EnvironmentID { return "unused" })
 
 		_, _, err := service.AddSkill(context.Background(), model.Skill{Key: "search"}, []string{"alpha", "beta"}, auto)
-		requireStatus(t, err, model.StatusCodeConflict)
+		requireStatus(t, err, commonresponse.StatusCodeConflict)
 		if len(store.updateManyCalls) != 1 || !reflect.DeepEqual(store.updateManyCalls[0].after, store.updateManyCalls[0].before) {
 			t.Fatalf("failed batch update mutated targets: %#v", store.updateManyCalls)
 		}
@@ -218,11 +168,11 @@ func TestEnvironmentServiceAddSkill(t *testing.T) {
 
 	t.Run("preserves store status", func(t *testing.T) {
 		store := &stubEnvironmentStore{
-			updateManyErr: model.NewError(model.StatusCodeNotFound, "environment not found: beta"),
+			updateManyErr: commonresponse.NewError(commonresponse.StatusCodeNotFound, "environment not found: beta"),
 		}
 		service := environmentservice.New(store, func() model.EnvironmentID { return "unused" })
 		_, _, err := service.AddSkill(context.Background(), model.Skill{Key: "search"}, []string{"alpha", "beta"}, auto)
-		requireStatus(t, err, model.StatusCodeNotFound)
+		requireStatus(t, err, commonresponse.StatusCodeNotFound)
 		for _, part := range []string{"add skill \"search\"", "environment not found: beta"} {
 			if !strings.Contains(err.Error(), part) {
 				t.Errorf("error %q does not contain %q", err, part)
@@ -232,13 +182,13 @@ func TestEnvironmentServiceAddSkill(t *testing.T) {
 }
 
 func TestEnvironmentServiceResolve(t *testing.T) {
-	auto := model.EnvironmentSkillPolicy{Kind: model.SkillPolicyAuto}
+	auto := model.EnvironmentSkillPolicy{Kind: constants.SkillPolicyAuto}
 	want := withSkill(testEnvironment("env-alpha", "alpha", 2), "search", auto)
 	store := &stubEnvironmentStore{
 		defaultResult: want,
 		getResults:    map[string]model.Environment{"alpha": want},
 		getErrors: map[string]error{
-			"missing": model.NewError(model.StatusCodeNotFound, "environment not found: missing"),
+			"missing": commonresponse.NewError(commonresponse.StatusCodeNotFound, "environment not found: missing"),
 		},
 	}
 	service := environmentservice.New(store, func() model.EnvironmentID { return "unused" })
@@ -264,7 +214,7 @@ func TestEnvironmentServiceResolve(t *testing.T) {
 	t.Run("empty identifier", func(t *testing.T) {
 		before := len(store.getCalls)
 		_, err := service.Resolve(context.Background(), "")
-		requireStatus(t, err, model.StatusCodeInvalidArgument)
+		requireStatus(t, err, commonresponse.StatusCodeInvalidArgument)
 		if len(store.getCalls) != before {
 			t.Fatal("empty identifier reached the store")
 		}
@@ -272,7 +222,7 @@ func TestEnvironmentServiceResolve(t *testing.T) {
 
 	t.Run("preserves not-found status", func(t *testing.T) {
 		_, err := service.Resolve(context.Background(), "missing")
-		requireStatus(t, err, model.StatusCodeNotFound)
+		requireStatus(t, err, commonresponse.StatusCodeNotFound)
 		if !strings.Contains(err.Error(), "resolve environment") {
 			t.Fatalf("error %q lacks operation context", err)
 		}
@@ -296,10 +246,10 @@ func TestEnvironmentServiceList(t *testing.T) {
 	}
 }
 
-func TestJSONEnvironmentStore(t *testing.T) {
+func TestEnvironmentDAL(t *testing.T) {
 	t.Run("initializes base and persists created Environments", func(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "nested", "environments.json")
-		store := jsonstore.NewEnvironmentStore(path)
+		store := dal.NewEnvironmentDAL(path)
 		base, err := store.Default(context.Background())
 		if err != nil {
 			t.Fatalf("Default returned error: %v", err)
@@ -308,7 +258,7 @@ func TestJSONEnvironmentStore(t *testing.T) {
 			t.Fatalf("default Environment = %#v", base)
 		}
 
-		auto := model.EnvironmentSkillPolicy{Kind: model.SkillPolicyAuto}
+		auto := model.EnvironmentSkillPolicy{Kind: constants.SkillPolicyAuto}
 		beta := testEnvironment(
 			"env-beta",
 			"beta",
@@ -324,7 +274,7 @@ func TestJSONEnvironmentStore(t *testing.T) {
 		}
 		beta.Skills[0].SkillKey = "changed-input"
 		created.Skills[0].SkillKey = "changed-result"
-		reloaded := jsonstore.NewEnvironmentStore(path)
+		reloaded := dal.NewEnvironmentDAL(path)
 		for _, identifier := range []string{"env-beta", "beta"} {
 			got, getErr := reloaded.GetByIDOrName(context.Background(), identifier)
 			if getErr != nil || got.Skills[0].SkillKey != "search" {
@@ -355,7 +305,7 @@ func TestJSONEnvironmentStore(t *testing.T) {
 		if err := os.WriteFile(path, []byte("{\"schemaVersion\":1,\"environments\":[]}\n"), 0o600); err != nil {
 			t.Fatalf("WriteFile returned error: %v", err)
 		}
-		store := jsonstore.NewEnvironmentStore(path)
+		store := dal.NewEnvironmentDAL(path)
 		base, err := store.Default(context.Background())
 		if err != nil || !reflect.DeepEqual(base, defaultBaseEnvironment(1)) {
 			t.Fatalf("Default = %#v, err=%v", base, err)
@@ -368,8 +318,9 @@ func TestJSONEnvironmentStore(t *testing.T) {
 		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 			t.Fatalf("WriteFile returned error: %v", err)
 		}
+		store := dal.NewEnvironmentDAL(path)
 
-		base, err := jsonstore.NewEnvironmentStore(path).Default(context.Background())
+		base, err := store.Default(context.Background())
 		if err != nil || !reflect.DeepEqual(base, defaultBaseEnvironment(5)) {
 			t.Fatalf("Default = %#v, err=%v", base, err)
 		}
@@ -382,7 +333,7 @@ func TestJSONEnvironmentStore(t *testing.T) {
 			t.Fatalf("persisted migration = %#v", persisted.Environments)
 		}
 		before := mustReadFile(t, path)
-		again, err := jsonstore.NewEnvironmentStore(path).Default(context.Background())
+		again, err := dal.NewEnvironmentDAL(path).Default(context.Background())
 		if err != nil || !reflect.DeepEqual(again, defaultBaseEnvironment(5)) {
 			t.Fatalf("second Default = %#v, err=%v", again, err)
 		}
@@ -395,19 +346,19 @@ func TestJSONEnvironmentStore(t *testing.T) {
 		tests := []struct {
 			name       string
 			candidate  model.Environment
-			wantStatus model.StatusCode
+			wantStatus commonresponse.StatusCode
 		}{
-			{name: "revision is not one", candidate: testEnvironment("env-beta", "beta", 2), wantStatus: model.StatusCodeInvalidArgument},
-			{name: "nil Skills", candidate: model.Environment{ID: "env-beta", Name: "beta", Revision: 1}, wantStatus: model.StatusCodeInvalidArgument},
-			{name: "duplicate id", candidate: testEnvironment("env-alpha", "beta", 1), wantStatus: model.StatusCodeConflict},
-			{name: "duplicate name", candidate: testEnvironment("env-beta", "alpha", 1), wantStatus: model.StatusCodeConflict},
-			{name: "id conflicts with name", candidate: testEnvironment("alpha", "beta", 1), wantStatus: model.StatusCodeConflict},
-			{name: "name conflicts with id", candidate: testEnvironment("env-beta", "env-alpha", 1), wantStatus: model.StatusCodeConflict},
+			{name: "revision is not one", candidate: testEnvironment("env-beta", "beta", 2), wantStatus: commonresponse.StatusCodeInvalidArgument},
+			{name: "nil Skills", candidate: model.Environment{ID: "env-beta", Name: "beta", Revision: 1}, wantStatus: commonresponse.StatusCodeInvalidArgument},
+			{name: "duplicate id", candidate: testEnvironment("env-alpha", "beta", 1), wantStatus: commonresponse.StatusCodeConflict},
+			{name: "duplicate name", candidate: testEnvironment("env-beta", "alpha", 1), wantStatus: commonresponse.StatusCodeConflict},
+			{name: "id conflicts with name", candidate: testEnvironment("alpha", "beta", 1), wantStatus: commonresponse.StatusCodeConflict},
+			{name: "name conflicts with id", candidate: testEnvironment("env-beta", "env-alpha", 1), wantStatus: commonresponse.StatusCodeConflict},
 		}
 		for _, test := range tests {
 			t.Run(test.name, func(t *testing.T) {
 				path := filepath.Join(t.TempDir(), "environments.json")
-				store := jsonstore.NewEnvironmentStore(path)
+				store := dal.NewEnvironmentDAL(path)
 				if _, err := store.Create(context.Background(), testEnvironment("env-alpha", "alpha", 1)); err != nil {
 					t.Fatalf("seed Create returned error: %v", err)
 				}
@@ -423,7 +374,7 @@ func TestJSONEnvironmentStore(t *testing.T) {
 
 	t.Run("updates multiple Environments atomically in request order", func(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "environments.json")
-		store := jsonstore.NewEnvironmentStore(path)
+		store := dal.NewEnvironmentDAL(path)
 		for _, current := range []model.Environment{
 			testEnvironment("env-alpha", "alpha", 1),
 			testEnvironment("env-beta", "beta", 1),
@@ -434,7 +385,7 @@ func TestJSONEnvironmentStore(t *testing.T) {
 		}
 		wantBinding := model.EnvironmentSkill{
 			SkillKey: "search",
-			Policy:   model.EnvironmentSkillPolicy{Kind: model.SkillPolicyAuto},
+			Policy:   model.EnvironmentSkillPolicy{Kind: constants.SkillPolicyAuto},
 		}
 
 		updated, err := store.UpdateMany(context.Background(), []string{"env-beta", "alpha"}, func(values []model.Environment) error {
@@ -476,18 +427,18 @@ func TestJSONEnvironmentStore(t *testing.T) {
 			name        string
 			identifiers []string
 			update      func([]model.Environment) error
-			wantStatus  model.StatusCode
+			wantStatus  commonresponse.StatusCode
 			wantCalled  bool
 		}{
-			{name: "missing target", identifiers: []string{"alpha", "missing"}, update: addSkillUpdate("search"), wantStatus: model.StatusCodeNotFound},
-			{name: "same Environment by id and name", identifiers: []string{"env-alpha", "alpha"}, update: addSkillUpdate("search"), wantStatus: model.StatusCodeInvalidArgument},
-			{name: "identity change", identifiers: []string{"alpha", "beta"}, update: func(values []model.Environment) error { values[1].Name = "renamed"; return nil }, wantStatus: model.StatusCodeInvalidArgument, wantCalled: true},
-			{name: "invalid aggregate", identifiers: []string{"alpha", "beta"}, update: func(values []model.Environment) error { values[1].Skills = nil; return nil }, wantStatus: model.StatusCodeInvalidArgument, wantCalled: true},
+			{name: "missing target", identifiers: []string{"alpha", "missing"}, update: addSkillUpdate("search"), wantStatus: commonresponse.StatusCodeNotFound},
+			{name: "same Environment by id and name", identifiers: []string{"env-alpha", "alpha"}, update: addSkillUpdate("search"), wantStatus: commonresponse.StatusCodeInvalidArgument},
+			{name: "identity change", identifiers: []string{"alpha", "beta"}, update: func(values []model.Environment) error { values[1].Name = "renamed"; return nil }, wantStatus: commonresponse.StatusCodeInvalidArgument, wantCalled: true},
+			{name: "invalid aggregate", identifiers: []string{"alpha", "beta"}, update: func(values []model.Environment) error { values[1].Skills = nil; return nil }, wantStatus: commonresponse.StatusCodeInvalidArgument, wantCalled: true},
 		}
 		for _, test := range tests {
 			t.Run(test.name, func(t *testing.T) {
 				path := filepath.Join(t.TempDir(), "environments.json")
-				store := jsonstore.NewEnvironmentStore(path)
+				store := dal.NewEnvironmentDAL(path)
 				for _, current := range []model.Environment{
 					testEnvironment("env-alpha", "alpha", 1),
 					testEnvironment("env-beta", "beta", 1),
@@ -524,6 +475,9 @@ func TestJSONEnvironmentStore(t *testing.T) {
 			{name: "unsupported schema", content: `{"schemaVersion":2,"environments":[]}`, wantErrorPart: "unsupported store schema version: 2"},
 			{name: "missing Environments", content: `{"schemaVersion":1}`, wantErrorPart: "environments must be an array"},
 			{name: "invalid Environment", content: `{"schemaVersion":1,"environments":[{"id":"env-alpha","name":"alpha","revision":1,"skills":null}]}`, wantErrorPart: "invalid stored environment"},
+			{name: "invalid Skill", content: `{"schemaVersion":1,"environments":[{"id":"env-alpha","name":"alpha","revision":1,"skills":[{"skillKey":"Bad Skill","policy":{"kind":"auto"}}]}]}`, wantErrorPart: "invalid skill key"},
+			{name: "invalid Skill policy", content: `{"schemaVersion":1,"environments":[{"id":"env-alpha","name":"alpha","revision":1,"skills":[{"skillKey":"search","policy":{"kind":"always"}}]}]}`, wantErrorPart: "unsupported skill policy"},
+			{name: "duplicate Skill", content: `{"schemaVersion":1,"environments":[{"id":"env-alpha","name":"alpha","revision":1,"skills":[{"skillKey":"search","policy":{"kind":"auto"}},{"skillKey":"search","policy":{"kind":"off"}}]}]}`, wantErrorPart: "contains duplicate skill"},
 			{name: "duplicate ID", content: `{"schemaVersion":1,"environments":[{"id":"env-shared","name":"alpha","revision":1,"skills":[]},{"id":"env-shared","name":"beta","revision":1,"skills":[]}]}`, wantErrorPart: "duplicate environment id"},
 			{name: "duplicate name", content: `{"schemaVersion":1,"environments":[{"id":"env-alpha","name":"alpha","revision":1,"skills":[]},{"id":"env-other","name":"alpha","revision":1,"skills":[]}]}`, wantErrorPart: "duplicate environment name"},
 		}
@@ -533,7 +487,7 @@ func TestJSONEnvironmentStore(t *testing.T) {
 				if err := os.WriteFile(path, []byte(test.content), 0o600); err != nil {
 					t.Fatalf("WriteFile returned error: %v", err)
 				}
-				_, err := jsonstore.NewEnvironmentStore(path).GetByIDOrName(context.Background(), "alpha")
+				_, err := dal.NewEnvironmentDAL(path).GetByIDOrName(context.Background(), "alpha")
 				if err == nil || !strings.Contains(err.Error(), test.wantErrorPart) {
 					t.Fatalf("error = %v, want part %q", err, test.wantErrorPart)
 				}
@@ -546,7 +500,7 @@ func TestJSONEnvironmentStore(t *testing.T) {
 		if err := os.WriteFile(parentFile, []byte("not a directory"), 0o600); err != nil {
 			t.Fatalf("WriteFile returned error: %v", err)
 		}
-		_, err := jsonstore.NewEnvironmentStore(filepath.Join(parentFile, "environments.json")).GetByIDOrName(context.Background(), "alpha")
+		_, err := dal.NewEnvironmentDAL(filepath.Join(parentFile, "environments.json")).GetByIDOrName(context.Background(), "alpha")
 		if err == nil || !strings.Contains(err.Error(), "get environment: create store directory") {
 			t.Fatalf("error = %v", err)
 		}
@@ -554,7 +508,7 @@ func TestJSONEnvironmentStore(t *testing.T) {
 }
 
 func TestJSONCommands(t *testing.T) {
-	store := jsonstore.NewEnvironmentStore(filepath.Join(t.TempDir(), "environments.json"))
+	store := dal.NewEnvironmentDAL(filepath.Join(t.TempDir(), "environments.json"))
 	service := environmentservice.New(store, func() model.EnvironmentID { return "env_coding" })
 
 	created := runJSONCommand(t, service, "env", "create", "coding", "--output", "json")
@@ -587,8 +541,8 @@ func TestJSONCommands(t *testing.T) {
 	decodeData(t, used, &useData)
 	if useData.Environment.Revision != 2 ||
 		len(useData.Environment.Skills) != 2 ||
-		useData.Environment.Skills[0] != model.DefaultGuideBinding() ||
-		useData.Environment.Skills[1].Policy.Kind != model.SkillPolicyOff {
+		useData.Environment.Skills[0] != defaultGuideBinding() ||
+		useData.Environment.Skills[1].Policy.Kind != constants.SkillPolicyOff {
 		t.Fatalf("resolved Environment = %#v", useData.Environment)
 	}
 
@@ -627,11 +581,11 @@ func TestJSONCommandFailures(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			store := jsonstore.NewEnvironmentStore(filepath.Join(t.TempDir(), "environments.json"))
+			store := dal.NewEnvironmentDAL(filepath.Join(t.TempDir(), "environments.json"))
 			service := environmentservice.New(store, func() model.EnvironmentID { return "env_unused" })
 			var stdout bytes.Buffer
 			var stderr bytes.Buffer
-			if exitCode := handler.Execute(context.Background(), service, &stdout, &stderr, test.args); exitCode != 1 {
+			if exitCode := routers.Execute(context.Background(), service, &stdout, &stderr, test.args); exitCode != 1 {
 				t.Fatalf("exit code = %d, want 1", exitCode)
 			}
 			if stderr.Len() != 0 {
@@ -655,7 +609,7 @@ func TestJSONCommandFailures(t *testing.T) {
 
 func TestCLIContract(t *testing.T) {
 	schema := compileResponseSchema(t)
-	store := jsonstore.NewEnvironmentStore(filepath.Join(t.TempDir(), "environments.json"))
+	store := dal.NewEnvironmentDAL(filepath.Join(t.TempDir(), "environments.json"))
 	service := environmentservice.New(store, func() model.EnvironmentID { return "env_coding" })
 
 	for _, test := range []struct {
@@ -675,7 +629,7 @@ func TestCLIContract(t *testing.T) {
 	} {
 		var stdout bytes.Buffer
 		var stderr bytes.Buffer
-		exitCode := handler.Execute(context.Background(), service, &stdout, &stderr, test.args)
+		exitCode := routers.Execute(context.Background(), service, &stdout, &stderr, test.args)
 		if stderr.Len() != 0 {
 			t.Fatalf("Execute(%q) stderr = %q", test.args, stderr.String())
 		}
@@ -740,7 +694,7 @@ func (s *stubEnvironmentStore) Create(_ context.Context, value model.Environment
 
 func (s *stubEnvironmentStore) Default(_ context.Context) (model.Environment, error) {
 	s.defaultCalls++
-	return model.Clone(s.defaultResult), s.defaultErr
+	return cloneEnvironment(s.defaultResult), s.defaultErr
 }
 
 func (s *stubEnvironmentStore) List(_ context.Context) ([]model.Environment, error) {
@@ -753,7 +707,7 @@ func (s *stubEnvironmentStore) GetByIDOrName(_ context.Context, identifier strin
 	if err := s.getErrors[identifier]; err != nil {
 		return model.Environment{}, err
 	}
-	return model.Clone(s.getResults[identifier]), nil
+	return cloneEnvironment(s.getResults[identifier]), nil
 }
 
 func (s *stubEnvironmentStore) UpdateMany(
@@ -807,12 +761,19 @@ func defaultBaseEnvironment(revision uint64) model.Environment {
 		"base",
 		"base",
 		revision,
-		model.DefaultGuideBinding(),
+		defaultGuideBinding(),
 	)
 }
 
+func defaultGuideBinding() model.EnvironmentSkill {
+	return model.EnvironmentSkill{
+		SkillKey: constants.DefaultGuideSkillKey,
+		Policy:   model.EnvironmentSkillPolicy{Kind: constants.SkillPolicyAuto},
+	}
+}
+
 func replaceEnvironment(value model.Environment, replace func(*model.Environment)) model.Environment {
-	value = model.Clone(value)
+	value = cloneEnvironment(value)
 	replace(&value)
 	return value
 }
@@ -829,9 +790,19 @@ func withSkill(
 func cloneEnvironments(values []model.Environment) []model.Environment {
 	cloned := make([]model.Environment, len(values))
 	for index, value := range values {
-		cloned[index] = model.Clone(value)
+		cloned[index] = cloneEnvironment(value)
 	}
 	return cloned
+}
+
+func cloneEnvironment(value model.Environment) model.Environment {
+	if value.Skills == nil {
+		return value
+	}
+	skills := make([]model.EnvironmentSkill, len(value.Skills))
+	copy(skills, value.Skills)
+	value.Skills = skills
+	return value
 }
 
 func addSkillUpdate(skillKey model.SkillKey) func([]model.Environment) error {
@@ -839,14 +810,14 @@ func addSkillUpdate(skillKey model.SkillKey) func([]model.Environment) error {
 		for index := range values {
 			values[index].Skills = append(values[index].Skills, model.EnvironmentSkill{
 				SkillKey: skillKey,
-				Policy:   model.EnvironmentSkillPolicy{Kind: model.SkillPolicyAuto},
+				Policy:   model.EnvironmentSkillPolicy{Kind: constants.SkillPolicyAuto},
 			})
 		}
 		return nil
 	}
 }
 
-func requireStatus(t *testing.T, err error, want model.StatusCode) {
+func requireStatus(t *testing.T, err error, want commonresponse.StatusCode) {
 	t.Helper()
 	if want == 0 {
 		if err != nil {
@@ -857,7 +828,7 @@ func requireStatus(t *testing.T, err error, want model.StatusCode) {
 	if err == nil {
 		t.Fatalf("expected status %d, got nil", want)
 	}
-	got, ok := model.StatusCodeOf(err)
+	got, ok := commonresponse.StatusCodeOf(err)
 	if !ok || got != want {
 		t.Fatalf("status = %d, ok=%t, want %d; error=%v", got, ok, want, err)
 	}
@@ -876,7 +847,7 @@ func runJSONCommand(t *testing.T, service *environmentservice.Service, args ...s
 	t.Helper()
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
-	if exitCode := handler.Execute(context.Background(), service, &stdout, &stderr, args); exitCode != 0 {
+	if exitCode := routers.Execute(context.Background(), service, &stdout, &stderr, args); exitCode != 0 {
 		t.Fatalf("Execute(%q) exit code = %d, stdout=%q stderr=%q", args, exitCode, stdout.String(), stderr.String())
 	}
 	if stderr.Len() != 0 {
