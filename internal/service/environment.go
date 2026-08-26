@@ -30,7 +30,7 @@ func New(store Store, newID IDGenerator) *Service {
 	return &Service{store: store, newID: newID}
 }
 
-// Create creates an empty Environment at revision one.
+// Create creates an Environment with the default guide Skill at revision one.
 func (s *Service) Create(ctx context.Context, name string) (model.Environment, error) {
 	if err := model.ValidateName(name); err != nil {
 		return model.Environment{}, err
@@ -39,7 +39,7 @@ func (s *Service) Create(ctx context.Context, name string) (model.Environment, e
 		ID:       s.newID(),
 		Name:     name,
 		Revision: 1,
-		Skills:   []model.EnvironmentSkill{},
+		Skills:   []model.EnvironmentSkill{model.DefaultGuideBinding()},
 	}
 	if err := created.Validate(); err != nil {
 		return model.Environment{}, err

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Hev Guide"
+  short_description: "Guide users through Hev environments and Skill setup"
+  default_prompt: "Use $hev-guide to inspect my Hev environment, find available Skills, and add the right ones."

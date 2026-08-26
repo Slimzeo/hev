@@ -3,6 +3,17 @@ package model
 // SkillKey is hev's host-neutral identity for one logical Skill.
 type SkillKey string
 
+// DefaultGuideSkillKey identifies the onboarding Skill included with hev.
+const DefaultGuideSkillKey SkillKey = "hev-guide"
+
+// DefaultGuideBinding returns the default auto-enabled onboarding binding.
+func DefaultGuideBinding() EnvironmentSkill {
+	return EnvironmentSkill{
+		SkillKey: DefaultGuideSkillKey,
+		Policy:   EnvironmentSkillPolicy{Kind: SkillPolicyAuto},
+	}
+}
+
 // Skill is the logical Skill known by hev Core. Host-specific content, paths,
 // providers, and locators remain owned by the host adapter.
 type Skill struct {

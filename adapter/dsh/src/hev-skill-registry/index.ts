@@ -3,16 +3,50 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
+import { readFile } from 'node:fs/promises'
+import { fileURLToPath } from 'node:url'
 import type {} from '@deepseek-ai/dsh-agent'
 import SkillRegistry from '@deepseek-ai/dsh-skill'
+import { BUNDLED_SKILL_RANK } from '@deepseek-ai/dsh-skill'
 import type {
   Config,
+  SkillCandidate,
   SkillCatalogSnapshot,
   SkillDefinition,
+  SkillProvider,
   SkillSummary,
   SkillViewOptions,
 } from '@deepseek-ai/dsh-skill'
 import type { Environment } from '../hev-runtime/index.ts'
+
+const hevGuideName = 'hev-guide'
+const hevGuideDescription = 'Guide users through Hev skill environments, distinguish the current environment from all DSH-discoverable Skills, find suitable Skills, and add them to the active environment. Use when the user asks what Hev is, which environment or Skills are active, why a discovered Skill is unavailable, how to find or enable a Skill, or how to configure the hev plugin.'
+const hevGuideUrl = new URL('../../skills/hev-guide/SKILL.md', import.meta.url)
+const hevGuideResourceBase = {
+  kind: 'directory',
+  path: fileURLToPath(new URL('../../skills/hev-guide/', import.meta.url)),
+} as const
+const hevGuideCandidate: SkillCandidate = {
+  name: hevGuideName,
+  description: hevGuideDescription,
+  invocation: { modelInvocable: true, userInvocable: true },
+  provider: hevGuideName,
+  source: 'bundled',
+  resourceBase: hevGuideResourceBase,
+  rank: BUNDLED_SKILL_RANK,
+  locator: hevGuideUrl,
+}
+
+const hevGuideProvider: SkillProvider = {
+  name: hevGuideName,
+  list: () => Promise.resolve([hevGuideCandidate]),
+  async get(): Promise<SkillDefinition> {
+    return {
+      ...hevGuideCandidate,
+      content: skillBody(await readFile(hevGuideUrl, 'utf8')),
+    }
+  },
+}
 
 /** Native DSH Skill Registry with hev Environment visibility applied at reads. */
 export class HevSkillRegistry extends SkillRegistry {
@@ -25,6 +59,7 @@ export class HevSkillRegistry extends SkillRegistry {
    */
   constructor(ctx: Context, config: Config = {}) {
     super(ctx, config)
+    this.registerProvider(() => hevGuideProvider)
   }
 
   /**
@@ -78,6 +113,12 @@ function autoSkillNames(environment: Environment): ReadonlySet<string> {
   return new Set(environment.skills
     .filter(skill => skill.policy.kind === 'auto')
     .map(skill => skill.skillKey))
+}
+
+function skillBody(document: string): string {
+  const match = /^---\r?\n[\s\S]*?\r?\n---\r?\n([\s\S]*)$/u.exec(document)
+  if (match?.[1] === undefined) throw new Error('bundled hev-guide SKILL.md has invalid frontmatter')
+  return match[1].trim()
 }
 
 export default HevSkillRegistry

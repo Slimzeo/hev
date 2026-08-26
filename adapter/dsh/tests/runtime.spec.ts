@@ -214,7 +214,7 @@ describe('@slimzeo/hev-dsh-plugin/hev-runtime', () => {
     await expect(ctx.commands.execute(owner, '/hev skill list', [], signal))
       .resolves.toMatchObject({ result: { kind: 'success', text: 'hev not activated' } })
     await expect(ctx.commands.execute(owner, '/hev skill list --global', [], signal))
-      .resolves.toMatchObject({ result: { kind: 'success', text: 'global:\n- code-review\n- outside-skill' } })
+      .resolves.toMatchObject({ result: { kind: 'success', text: 'global:\n- code-review\n- hev-guide\n- outside-skill' } })
     await expect(ctx.commands.execute(owner, '/hev skill list extra', [], signal))
       .resolves.toMatchObject({ result: { kind: 'error', text: expect.stringContaining('skill list') } })
     await expect(ctx.commands.execute(owner, '/hev env list', [], signal))

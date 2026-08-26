@@ -90,7 +90,7 @@ func TestEnvironmentServiceCreate(t *testing.T) {
 		wantIDCalls int
 		wantCreates int
 	}{
-		{name: "creates revision one with no skills", envName: "alpha-env", generatedID: "env-1", wantIDCalls: 1, wantCreates: 1},
+		{name: "creates revision one with the guide Skill", envName: "alpha-env", generatedID: "env-1", wantIDCalls: 1, wantCreates: 1},
 		{name: "rejects invalid name before generating id", envName: "Alpha Env", generatedID: "env-1", wantStatus: model.StatusCodeInvalidArgument},
 		{name: "rejects empty generated id before persistence", envName: "alpha-env", generatedID: "", wantStatus: model.StatusCodeInvalidArgument, wantIDCalls: 1},
 	}
@@ -116,7 +116,7 @@ func TestEnvironmentServiceCreate(t *testing.T) {
 				return
 			}
 
-			want := testEnvironment(test.generatedID, test.envName, 1)
+			want := testEnvironment(test.generatedID, test.envName, 1, model.DefaultGuideBinding())
 			if !reflect.DeepEqual(store.createCalls[0], want) || !reflect.DeepEqual(created, want) {
 				t.Fatalf("created=%#v persisted=%#v, want %#v", created, store.createCalls[0], want)
 			}
@@ -304,7 +304,7 @@ func TestJSONEnvironmentStore(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Default returned error: %v", err)
 		}
-		if !reflect.DeepEqual(base, testEnvironment("base", "base", 1)) {
+		if !reflect.DeepEqual(base, defaultBaseEnvironment(1)) {
 			t.Fatalf("default Environment = %#v", base)
 		}
 
@@ -357,25 +357,37 @@ func TestJSONEnvironmentStore(t *testing.T) {
 		}
 		store := jsonstore.NewEnvironmentStore(path)
 		base, err := store.Default(context.Background())
-		if err != nil || base.ID != "base" || base.Name != "base" {
+		if err != nil || !reflect.DeepEqual(base, defaultBaseEnvironment(1)) {
 			t.Fatalf("Default = %#v, err=%v", base, err)
 		}
 	})
 
-	t.Run("migrates the legacy base ID", func(t *testing.T) {
+	t.Run("migrates the legacy base ID and adds the guide Skill", func(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "environments.json")
-		legacy := "{\"schemaVersion\":1,\"environments\":[{\"id\":\"env_base\",\"name\":\"base\",\"revision\":1,\"skills\":[]}]}\n"
-		if err := os.WriteFile(path, []byte(legacy), 0o600); err != nil {
+		content := `{"schemaVersion":1,"environments":[{"id":"env_base","name":"base","revision":4,"skills":[]}]}` + "\n"
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 			t.Fatalf("WriteFile returned error: %v", err)
 		}
-		store := jsonstore.NewEnvironmentStore(path)
 
-		base, err := store.Default(context.Background())
-		if err != nil || base.ID != "base" {
+		base, err := jsonstore.NewEnvironmentStore(path).Default(context.Background())
+		if err != nil || !reflect.DeepEqual(base, defaultBaseEnvironment(5)) {
 			t.Fatalf("Default = %#v, err=%v", base, err)
 		}
-		if bytes.Contains(mustReadFile(t, path), []byte("env_base")) {
-			t.Fatal("legacy base ID remained persisted")
+
+		var persisted persistedStoreFile
+		if err := json.Unmarshal(mustReadFile(t, path), &persisted); err != nil {
+			t.Fatalf("decode persisted migration: %v", err)
+		}
+		if len(persisted.Environments) != 1 || !reflect.DeepEqual(persisted.Environments[0], defaultBaseEnvironment(5)) {
+			t.Fatalf("persisted migration = %#v", persisted.Environments)
+		}
+		before := mustReadFile(t, path)
+		again, err := jsonstore.NewEnvironmentStore(path).Default(context.Background())
+		if err != nil || !reflect.DeepEqual(again, defaultBaseEnvironment(5)) {
+			t.Fatalf("second Default = %#v, err=%v", again, err)
+		}
+		if after := mustReadFile(t, path); !bytes.Equal(after, before) {
+			t.Fatalf("idempotent migration changed persisted bytes:\nbefore: %s\nafter: %s", before, after)
 		}
 	})
 
@@ -573,7 +585,10 @@ func TestJSONCommands(t *testing.T) {
 		Environment model.Environment `json:"environment"`
 	}
 	decodeData(t, used, &useData)
-	if useData.Environment.Revision != 2 || len(useData.Environment.Skills) != 1 || useData.Environment.Skills[0].Policy.Kind != model.SkillPolicyOff {
+	if useData.Environment.Revision != 2 ||
+		len(useData.Environment.Skills) != 2 ||
+		useData.Environment.Skills[0] != model.DefaultGuideBinding() ||
+		useData.Environment.Skills[1].Policy.Kind != model.SkillPolicyOff {
 		t.Fatalf("resolved Environment = %#v", useData.Environment)
 	}
 
@@ -785,6 +800,15 @@ func testEnvironment(
 		Revision: revision,
 		Skills:   append([]model.EnvironmentSkill{}, skills...),
 	}
+}
+
+func defaultBaseEnvironment(revision uint64) model.Environment {
+	return testEnvironment(
+		"base",
+		"base",
+		revision,
+		model.DefaultGuideBinding(),
+	)
 }
 
 func replaceEnvironment(value model.Environment, replace func(*model.Environment)) model.Environment {

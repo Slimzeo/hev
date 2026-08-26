@@ -25,7 +25,7 @@ var baseEnvironment = model.Environment{
 	ID:       "base",
 	Name:     "base",
 	Revision: 1,
-	Skills:   []model.EnvironmentSkill{},
+	Skills:   []model.EnvironmentSkill{model.DefaultGuideBinding()},
 }
 
 // EnvironmentStore persists the current Environment records in one JSON file.
@@ -262,8 +262,28 @@ func (s *EnvironmentStore) readFile() (storeFile, bool, error) {
 	if len(file.Environments) == 0 {
 		file.Environments = []model.Environment{model.Clone(baseEnvironment)}
 		dirty = true
+	} else if addMissingBaseDefaults(&file) {
+		dirty = true
 	}
 	return file, dirty, nil
+}
+
+func addMissingBaseDefaults(file *storeFile) bool {
+	index := environmentIndexByIDOrName(file.Environments, baseEnvironment.Name)
+	if index < 0 {
+		return false
+	}
+	for _, skill := range file.Environments[index].Skills {
+		if skill.SkillKey == model.DefaultGuideSkillKey {
+			return false
+		}
+	}
+	file.Environments[index].Skills = append(
+		file.Environments[index].Skills,
+		model.DefaultGuideBinding(),
+	)
+	file.Environments[index].Revision++
+	return true
 }
 
 func (s *EnvironmentStore) writeFile(file storeFile) error {

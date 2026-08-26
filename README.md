@@ -1,6 +1,6 @@
 # hev — your personal Skill Environment manager
 
-hev groups native agent Skills into selectable Environments. A live Session may select one Environment; without a selection, hev is inactive and native Skill visibility is unchanged.
+hev groups native agent Skills into selectable Environments. A live Session may select one Environment; without a selection, hev is inactive and native Skill visibility is unchanged. `base` and every newly created Environment include the bundled `hev-guide` Skill for discovering and enabling other Skills after activation.
 
 ```bash
 npx @deepseek-ai/dsh plugin --profile web add @slimzeo/hev-dsh-plugin@latest
