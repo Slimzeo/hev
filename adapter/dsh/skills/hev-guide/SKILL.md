@@ -11,10 +11,10 @@ The `base` Environment and every Environment created by hev include this guide w
 
 ## Inspect the environment
 
-Use these commands and keep their meanings separate:
+Use the model-facing hev Tools directly and keep their meanings separate:
 
-- `/hev env status` — show the hev environment selected by this Session.
-- `/hev skill list` — show bindings in that environment, including `auto` and `off` policies.
+- `hev_env_status` — show the hev environment selected by this Session.
+- `hev_skill_list` — show bindings in that environment, including `auto` and `off` policies.
 
 Do not infer current availability only from files under `~/.dsh/skills`. Files show installation; the current hev binding controls whether the session catalog can expose them.
 
@@ -37,22 +37,15 @@ Clearly label this as the DSH-discoverable set, not the current environment's en
 
 ## Add a Skill
 
-1. Read the current environment name from `/hev env status`.
+1. Read the current environment name with `hev_env_status`.
 2. Inspect all DSH discovery sources above and match candidate descriptions to the user's task.
 3. Confirm the choice when more than one candidate is plausible.
-4. Add the selected Skill:
-
-   ```text
-   /hev skill add <skill-name> <environment-name> --policy auto
-   ```
-
-5. Verify with `/hev skill list`. On the next agent turn, confirm that the Skill appears in the session catalog and load it before use.
-
-When adding more than one Skill, put every `/hev skill add` command in its own fenced `text` block with a short label before it. Never combine multiple commands in one block; keep each command independently copyable.
+4. Call `hev_skill_add` with the Skill name, target Environment names, and `auto` policy.
+5. Verify with `hev_skill_list`. On the next agent turn, confirm that the Skill appears in the session catalog and load it before use.
 
 Use `--policy off` only when the user wants the binding recorded but unavailable to the model.
 
-If slash commands cannot be executed from the current model/tool surface, give the user the exact command to run. Never claim that a Skill was added until the command succeeds.
+If hev Tools are unavailable, give the user the equivalent `/hev` command to run. Never claim that a Skill was added until the Tool or command succeeds.
 
 ## Explain common states
 

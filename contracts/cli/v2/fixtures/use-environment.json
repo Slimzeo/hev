@@ -1,21 +1,26 @@
 {
   "schemaVersion": 2,
   "code": 200,
-  "message": "environment resolved",
+  "message": "environment selected",
   "prompt": "",
   "data": {
-    "environment": {
-      "id": "env_coding",
-      "name": "coding",
-      "revision": 2,
-      "skills": [
-        {
-          "skillKey": "code-review",
-          "policy": {
-            "kind": "auto"
+    "session": {
+      "source": "standalone",
+      "sessionId": "session-1",
+      "environment": {
+        "source": "standalone",
+        "id": "env_coding",
+        "name": "coding",
+        "revision": 2,
+        "skills": [
+          {
+            "skillKey": "code-review",
+            "policy": {
+              "kind": "auto"
+            }
           }
-        }
-      ]
+        ]
+      }
     }
   }
 }

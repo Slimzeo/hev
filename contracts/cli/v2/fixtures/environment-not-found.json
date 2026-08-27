@@ -2,6 +2,6 @@
   "schemaVersion": 2,
   "code": 404,
   "message": "environment not found: missing",
-  "prompt": "create the environment before using it",
+  "prompt": "List the available Environments and retry with an existing Environment ID or name.",
   "data": {}
 }

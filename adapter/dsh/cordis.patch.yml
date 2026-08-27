@@ -8,3 +8,6 @@
 
     - id: hev-skill-registry
       name: '@slimzeo/hev-dsh-plugin/hev-skill-registry'
+
+    - id: hev-tool
+      name: '@slimzeo/hev-dsh-plugin/hev-tool'

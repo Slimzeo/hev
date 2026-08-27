@@ -35,9 +35,11 @@ var baseEnvironment = model.Environment{
 	}},
 }
 
-// EnvironmentDAL persists Environment models in one JSON file.
+// EnvironmentDAL persists Environment records and their Session bindings.
 type EnvironmentDAL struct {
-	path string
+	source          model.Source
+	environmentPath string
+	sessionPath     string
 }
 
 type storeFile struct {
@@ -45,21 +47,47 @@ type storeFile struct {
 	Environments  []model.Environment `json:"environments"`
 }
 
-// NewEnvironmentDAL binds Environment persistence to path.
-func NewEnvironmentDAL(path string) *EnvironmentDAL {
-	return &EnvironmentDAL{path: path}
+type sessionBinding struct {
+	SessionID     string              `json:"sessionId"`
+	EnvironmentID model.EnvironmentID `json:"environmentId"`
+}
+
+type sessionStoreFile struct {
+	SchemaVersion int              `json:"schemaVersion"`
+	Bindings      []sessionBinding `json:"bindings"`
+}
+
+// NewEnvironmentDAL binds Environment persistence to one host state directory.
+func NewEnvironmentDAL(source model.Source, stateDir string) *EnvironmentDAL {
+	return &EnvironmentDAL{
+		source:          source,
+		environmentPath: filepath.Join(stateDir, constants.EnvironmentStoreFileName),
+		sessionPath:     filepath.Join(stateDir, constants.SessionStoreFileName),
+	}
+}
+
+// Source returns the Coding Agent platform isolated by this store.
+func (d *EnvironmentDAL) Source() model.Source {
+	return d.source
 }
 
 // Create atomically inserts an Environment.
 func (d *EnvironmentDAL) Create(ctx context.Context, environment model.Environment) (model.Environment, error) {
+	if environment.Source != d.source {
+		return model.Environment{}, commonresponse.NewError(
+			commonresponse.StatusCodeInvalidArgument,
+			fmt.Sprintf("environment source %q does not match store source %q", environment.Source, d.source),
+			"Retry through the Coding Agent adapter that owns this Environment.",
+		)
+	}
 	if err := validateEnvironment(environment); err != nil {
 		return model.Environment{}, err
 	}
 	if environment.Revision != 1 {
 		return model.Environment{}, commonresponse.NewError(
 			commonresponse.StatusCodeInvalidArgument,
-			"new environment %q revision must be one",
-			environment.Name,
+			fmt.Sprintf("new environment %q revision must be one", environment.Name),
+			"Create a new Environment at revision 1.",
 		)
 	}
 
@@ -72,8 +100,8 @@ func (d *EnvironmentDAL) Create(ctx context.Context, environment model.Environme
 				existing.Name == string(environment.ID) {
 				return commonresponse.NewError(
 					commonresponse.StatusCodeConflict,
-					"environment already exists: %s",
-					environment.Name,
+					fmt.Sprintf("environment already exists: %s", environment.Name),
+					"List the available Environments and choose a different name.",
 				)
 			}
 		}
@@ -116,8 +144,8 @@ func (d *EnvironmentDAL) GetByIDOrName(ctx context.Context, identifier string) (
 		if !found {
 			return commonresponse.NewError(
 				commonresponse.StatusCodeNotFound,
-				"environment not found: %s",
-				identifier,
+				fmt.Sprintf("environment not found: %s", identifier),
+				"List the available Environments and retry with an existing Environment ID or name.",
 			)
 		}
 		environment = cloneEnvironment(stored)
@@ -145,15 +173,15 @@ func (d *EnvironmentDAL) UpdateMany(
 			if storedIndex < 0 {
 				return commonresponse.NewError(
 					commonresponse.StatusCodeNotFound,
-					"environment not found: %s",
-					identifier,
+					fmt.Sprintf("environment not found: %s", identifier),
+					"List the available Environments and retry with an existing Environment ID or name.",
 				)
 			}
 			if _, exists := seen[file.Environments[storedIndex].ID]; exists {
 				return commonresponse.NewError(
 					commonresponse.StatusCodeInvalidArgument,
-					"environment %q was supplied more than once",
-					identifier,
+					fmt.Sprintf("environment %q was supplied more than once", identifier),
+					"Provide each target Environment only once.",
 				)
 			}
 			seen[file.Environments[storedIndex].ID] = struct{}{}
@@ -168,10 +196,12 @@ func (d *EnvironmentDAL) UpdateMany(
 		for selectedIndex, storedIndex := range indexes {
 			previous := file.Environments[storedIndex]
 			next := selected[selectedIndex]
-			if next.ID != previous.ID || next.Name != previous.Name || next.Revision != previous.Revision {
+			if next.Source != previous.Source || next.ID != previous.ID ||
+				next.Name != previous.Name || next.Revision != previous.Revision {
 				return commonresponse.NewError(
 					commonresponse.StatusCodeInvalidArgument,
-					"environment update cannot change id, name, or revision",
+					"environment update cannot change source, id, name, or revision",
+					"Retry without changing the Environment source, ID, name, or revision.",
 				)
 			}
 			next.Revision++
@@ -189,16 +219,116 @@ func (d *EnvironmentDAL) UpdateMany(
 	return updated, nil
 }
 
+// GetSessionEnvironment returns the Environment ID selected by one Session.
+func (d *EnvironmentDAL) GetSessionEnvironment(
+	ctx context.Context,
+	sessionID string,
+) (model.EnvironmentID, bool, error) {
+	var environmentID model.EnvironmentID
+	found := false
+	err := d.withLockedSessionFile(ctx, false, func(file *sessionStoreFile) error {
+		for _, binding := range file.Bindings {
+			if binding.SessionID == sessionID {
+				environmentID = binding.EnvironmentID
+				found = true
+				break
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return "", false, fmt.Errorf("get session binding: %w", err)
+	}
+	return environmentID, found, nil
+}
+
+// SetSessionEnvironment creates or replaces one Session binding.
+func (d *EnvironmentDAL) SetSessionEnvironment(
+	ctx context.Context,
+	sessionID string,
+	environmentID model.EnvironmentID,
+) error {
+	if sessionID == "" {
+		return errors.New("set session binding: session id must not be empty")
+	}
+	if strings.TrimSpace(string(environmentID)) == "" {
+		return errors.New("set session binding: environment id must not be empty")
+	}
+	err := d.withLockedSessionFile(ctx, true, func(file *sessionStoreFile) error {
+		for index := range file.Bindings {
+			if file.Bindings[index].SessionID == sessionID {
+				file.Bindings[index].EnvironmentID = environmentID
+				return nil
+			}
+		}
+		file.Bindings = append(file.Bindings, sessionBinding{
+			SessionID: sessionID, EnvironmentID: environmentID,
+		})
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("set session binding: %w", err)
+	}
+	return nil
+}
+
+// UpdateSessionEnvironment atomically replaces or removes one Session binding.
+func (d *EnvironmentDAL) UpdateSessionEnvironment(
+	ctx context.Context,
+	sessionID string,
+	update func(model.EnvironmentID, bool) (model.EnvironmentID, bool),
+) (bool, error) {
+	if sessionID == "" {
+		return false, errors.New("update session binding: session id must not be empty")
+	}
+	active := false
+	err := d.withLockedSessionFile(ctx, true, func(file *sessionStoreFile) error {
+		var current model.EnvironmentID
+		index := -1
+		for bindingIndex, binding := range file.Bindings {
+			if binding.SessionID == sessionID {
+				current = binding.EnvironmentID
+				index = bindingIndex
+				break
+			}
+		}
+
+		next, keep := update(current, index >= 0)
+		if !keep {
+			if index >= 0 {
+				file.Bindings = append(file.Bindings[:index], file.Bindings[index+1:]...)
+			}
+			return nil
+		}
+		if strings.TrimSpace(string(next)) == "" {
+			return errors.New("updated environment id must not be empty")
+		}
+		if index >= 0 {
+			file.Bindings[index].EnvironmentID = next
+		} else {
+			file.Bindings = append(file.Bindings, sessionBinding{
+				SessionID: sessionID, EnvironmentID: next,
+			})
+		}
+		active = true
+		return nil
+	})
+	if err != nil {
+		return false, fmt.Errorf("update session binding: %w", err)
+	}
+	return active, nil
+}
+
 func (d *EnvironmentDAL) withLockedFile(
 	ctx context.Context,
 	write bool,
 	operation func(*storeFile) error,
 ) (returnErr error) {
-	if err := os.MkdirAll(filepath.Dir(d.path), 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(d.environmentPath), 0o700); err != nil {
 		return fmt.Errorf("create store directory: %w", err)
 	}
 
-	fileLock := flock.New(d.path+".lock", flock.SetFlag(os.O_CREATE|os.O_RDWR), flock.SetPermissions(0o600))
+	fileLock := flock.New(d.environmentPath+".lock", flock.SetFlag(os.O_CREATE|os.O_RDWR), flock.SetPermissions(0o600))
 	locked, err := fileLock.TryLockContext(ctx, 10*time.Millisecond)
 	if err != nil {
 		return fmt.Errorf("lock store: %w", err)
@@ -225,12 +355,110 @@ func (d *EnvironmentDAL) withLockedFile(
 	return d.writeFile(file)
 }
 
+func (d *EnvironmentDAL) withLockedSessionFile(
+	ctx context.Context,
+	write bool,
+	operation func(*sessionStoreFile) error,
+) (returnErr error) {
+	if err := os.MkdirAll(filepath.Dir(d.sessionPath), 0o700); err != nil {
+		return fmt.Errorf("create store directory: %w", err)
+	}
+
+	fileLock := flock.New(d.sessionPath+".lock", flock.SetFlag(os.O_CREATE|os.O_RDWR), flock.SetPermissions(0o600))
+	locked, err := fileLock.TryLockContext(ctx, 10*time.Millisecond)
+	if err != nil {
+		return fmt.Errorf("lock store: %w", err)
+	}
+	if !locked {
+		return fmt.Errorf("lock store: %w", ctx.Err())
+	}
+	defer func() {
+		if err := fileLock.Unlock(); returnErr == nil && err != nil {
+			returnErr = fmt.Errorf("unlock store: %w", err)
+		}
+	}()
+
+	file, exists, err := d.readSessionFile()
+	if err != nil {
+		return err
+	}
+	if err := operation(&file); err != nil {
+		return err
+	}
+	if !write || (!exists && len(file.Bindings) == 0) {
+		return nil
+	}
+	return writeSessionFile(d.sessionPath, file)
+}
+
+func (d *EnvironmentDAL) readSessionFile() (sessionStoreFile, bool, error) {
+	content, err := os.ReadFile(d.sessionPath)
+	if errors.Is(err, fs.ErrNotExist) {
+		return sessionStoreFile{
+			SchemaVersion: constants.SessionStoreSchemaVersion,
+			Bindings:      []sessionBinding{},
+		}, false, nil
+	}
+	if err != nil {
+		return sessionStoreFile{}, false, fmt.Errorf("read store: %w", err)
+	}
+
+	var file sessionStoreFile
+	decoder := json.NewDecoder(bytes.NewReader(content))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&file); err != nil {
+		return sessionStoreFile{}, false, fmt.Errorf("decode store: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return sessionStoreFile{}, false, errors.New("decode store: expected exactly one JSON object")
+	}
+	if file.SchemaVersion != constants.SessionStoreSchemaVersion {
+		return sessionStoreFile{}, false, fmt.Errorf("unsupported store schema version: %d", file.SchemaVersion)
+	}
+	if file.Bindings == nil {
+		return sessionStoreFile{}, false, errors.New("decode store: bindings must be an array")
+	}
+
+	seen := make(map[string]struct{}, len(file.Bindings))
+	for _, binding := range file.Bindings {
+		if binding.SessionID == "" {
+			return sessionStoreFile{}, false, errors.New("invalid store: session id must not be empty")
+		}
+		if strings.TrimSpace(string(binding.EnvironmentID)) == "" {
+			return sessionStoreFile{}, false, fmt.Errorf(
+				"invalid store: session %q environment id must not be empty",
+				binding.SessionID,
+			)
+		}
+		if _, exists := seen[binding.SessionID]; exists {
+			return sessionStoreFile{}, false, fmt.Errorf("invalid store: duplicate session id %q", binding.SessionID)
+		}
+		seen[binding.SessionID] = struct{}{}
+	}
+	return file, true, nil
+}
+
+func writeSessionFile(path string, file sessionStoreFile) error {
+	sort.Slice(file.Bindings, func(i, j int) bool {
+		return file.Bindings[i].SessionID < file.Bindings[j].SessionID
+	})
+	content, err := json.MarshalIndent(file, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode store: %w", err)
+	}
+	content = append(content, '\n')
+	if err := atomic.WriteFile(path, bytes.NewReader(content)); err != nil {
+		return fmt.Errorf("write store: %w", err)
+	}
+	return nil
+}
+
 func (d *EnvironmentDAL) readFile() (storeFile, bool, error) {
-	content, err := os.ReadFile(d.path)
+	content, err := os.ReadFile(d.environmentPath)
 	if errors.Is(err, fs.ErrNotExist) {
 		return storeFile{
 			SchemaVersion: constants.EnvironmentStoreSchemaVersion,
-			Environments:  []model.Environment{cloneEnvironment(baseEnvironment)},
+			Environments:  []model.Environment{d.baseEnvironment()},
 		}, true, nil
 	}
 	if err != nil {
@@ -255,6 +483,10 @@ func (d *EnvironmentDAL) readFile() (storeFile, bool, error) {
 
 	dirty := false
 	for index := range file.Environments {
+		if file.Environments[index].Source == "" {
+			file.Environments[index].Source = d.source
+			dirty = true
+		}
 		if file.Environments[index].ID == constants.LegacyBaseEnvironmentID &&
 			file.Environments[index].Name == constants.BaseEnvironmentName {
 			file.Environments[index].ID = constants.BaseEnvironmentID
@@ -264,6 +496,14 @@ func (d *EnvironmentDAL) readFile() (storeFile, bool, error) {
 	seenIDs := make(map[model.EnvironmentID]struct{}, len(file.Environments))
 	seenNames := make(map[string]struct{}, len(file.Environments))
 	for _, environment := range file.Environments {
+		if environment.Source != d.source {
+			return storeFile{}, false, fmt.Errorf(
+				"invalid store: environment %q source %q does not match %q",
+				environment.Name,
+				environment.Source,
+				d.source,
+			)
+		}
 		if err := validateEnvironment(environment); err != nil {
 			return storeFile{}, false, fmt.Errorf("invalid stored environment: %w", err)
 		}
@@ -283,7 +523,7 @@ func (d *EnvironmentDAL) readFile() (storeFile, bool, error) {
 		seenNames[environment.Name] = struct{}{}
 	}
 	if len(file.Environments) == 0 {
-		file.Environments = []model.Environment{cloneEnvironment(baseEnvironment)}
+		file.Environments = []model.Environment{d.baseEnvironment()}
 		dirty = true
 	} else if addMissingBaseDefaults(&file) {
 		dirty = true
@@ -312,6 +552,12 @@ func addMissingBaseDefaults(file *storeFile) bool {
 	return true
 }
 
+func (d *EnvironmentDAL) baseEnvironment() model.Environment {
+	environment := cloneEnvironment(baseEnvironment)
+	environment.Source = d.source
+	return environment
+}
+
 func (d *EnvironmentDAL) writeFile(file storeFile) error {
 	sort.Slice(file.Environments, func(i, j int) bool {
 		return file.Environments[i].Name < file.Environments[j].Name
@@ -321,35 +567,46 @@ func (d *EnvironmentDAL) writeFile(file storeFile) error {
 		return fmt.Errorf("encode store: %w", err)
 	}
 	content = append(content, '\n')
-	if err := atomic.WriteFile(d.path, bytes.NewReader(content)); err != nil {
+	if err := atomic.WriteFile(d.environmentPath, bytes.NewReader(content)); err != nil {
 		return fmt.Errorf("write store: %w", err)
 	}
 	return nil
 }
 
 func validateEnvironment(environment model.Environment) error {
+	if !environment.Source.Valid() {
+		return commonresponse.NewError(
+			commonresponse.StatusCodeInvalidArgument,
+			fmt.Sprintf("unsupported environment source %q", environment.Source),
+			"Use a supported Coding Agent adapter to manage this Environment.",
+		)
+	}
 	if strings.TrimSpace(string(environment.ID)) == "" {
-		return commonresponse.NewError(commonresponse.StatusCodeInvalidArgument, "environment id must not be empty")
+		return commonresponse.NewError(
+			commonresponse.StatusCodeInvalidArgument,
+			"environment id must not be empty",
+			"Retry the operation. If it still fails, inspect the hev logs.",
+		)
 	}
 	if !keyPattern.MatchString(environment.Name) {
 		return commonresponse.NewError(
 			commonresponse.StatusCodeInvalidArgument,
-			"invalid environment name %q: use lowercase kebab-case",
-			environment.Name,
+			fmt.Sprintf("invalid environment name %q", environment.Name),
+			"Use a lowercase kebab-case Environment name such as \"coding-tools\".",
 		)
 	}
 	if environment.Revision == 0 {
 		return commonresponse.NewError(
 			commonresponse.StatusCodeInvalidArgument,
-			"environment %q revision must be greater than zero",
-			environment.Name,
+			fmt.Sprintf("environment %q revision must be greater than zero", environment.Name),
+			"Repair the persisted Environment revision, then retry.",
 		)
 	}
 	if environment.Skills == nil {
 		return commonresponse.NewError(
 			commonresponse.StatusCodeInvalidArgument,
-			"environment %q skills must be an array",
-			environment.Name,
+			fmt.Sprintf("environment %q skills must be an array", environment.Name),
+			"Repair the persisted Environment Skills list, then retry.",
 		)
 	}
 
@@ -358,24 +615,22 @@ func validateEnvironment(environment model.Environment) error {
 		if !keyPattern.MatchString(string(skill.SkillKey)) {
 			return commonresponse.NewError(
 				commonresponse.StatusCodeInvalidArgument,
-				"invalid skill key %q: use lowercase kebab-case",
-				skill.SkillKey,
+				fmt.Sprintf("invalid skill key %q", skill.SkillKey),
+				"Use a lowercase kebab-case Skill key such as \"code-review\".",
 			)
 		}
 		if skill.Policy.Kind != constants.SkillPolicyAuto && skill.Policy.Kind != constants.SkillPolicyOff {
 			return commonresponse.NewError(
 				commonresponse.StatusCodeInvalidArgument,
-				"skill %q: unsupported skill policy: %s",
-				skill.SkillKey,
-				skill.Policy.Kind,
+				fmt.Sprintf("skill %q: unsupported skill policy: %s", skill.SkillKey, skill.Policy.Kind),
+				"Use policy auto or off.",
 			)
 		}
 		if _, exists := seenSkills[skill.SkillKey]; exists {
 			return commonresponse.NewError(
 				commonresponse.StatusCodeInvalidArgument,
-				"environment %q contains duplicate skill %q",
-				environment.Name,
-				skill.SkillKey,
+				fmt.Sprintf("environment %q contains duplicate skill %q", environment.Name, skill.SkillKey),
+				"Remove the duplicate Skill binding from the Environment, then retry.",
 			)
 		}
 		seenSkills[skill.SkillKey] = struct{}{}

@@ -14,6 +14,7 @@
     { "path": "../../../deepseek-harness/packages/core/scope" },
     { "path": "../../../deepseek-harness/packages/core/session" },
     { "path": "../../../deepseek-harness/packages/core/agent" },
+    { "path": "../../../deepseek-harness/packages/core/tools" },
     { "path": "../../../deepseek-harness/packages/interaction/commands" },
     { "path": "../../../deepseek-harness/packages/skill/skill" }
   ]

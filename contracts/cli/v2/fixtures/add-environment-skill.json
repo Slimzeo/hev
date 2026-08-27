@@ -12,6 +12,7 @@
     },
     "environments": [
       {
+        "source": "standalone",
         "id": "env_coding",
         "name": "coding",
         "revision": 2

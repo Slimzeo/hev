@@ -9,7 +9,13 @@ import z from '@deepseek-ai/schemastery'
 import { HevCliClient, HevCliError } from './cli.ts'
 import type { NativeCommandRunner } from './cli.ts'
 import { bundledExecutable } from './executable.ts'
-import type { Environment, EnvironmentId } from './environment.ts'
+import type {
+  AddedEnvironmentSkill,
+  CreatedEnvironment,
+  Environment,
+  EnvironmentSummary,
+  SkillPolicyKind,
+} from './environment.ts'
 
 // Type-only edge: resolves ctx.commands for the optional command child.
 import type {} from '@deepseek-ai/dsh-commands'
@@ -18,10 +24,13 @@ export { EnvironmentId } from './environment.ts'
 export { StatusCode } from './environment.ts'
 export type {
   Environment,
+  EnvironmentSession,
+  CreatedEnvironment,
   EnvironmentSkillPolicy,
   EnvironmentSkillSpec,
   EnvironmentSummary,
   FailureStatusCode,
+  Source,
   SkillPolicyKind,
 } from './environment.ts'
 export { HevCliClient, HevCliError } from './cli.ts'
@@ -47,15 +56,46 @@ interface GlobalSkillReader {
   listAll(options?: SkillViewOptions): Promise<SkillSummary[]>
 }
 
-const USAGE = 'usage: /hev env create <name> | env list | env use <id-or-name> | env quit | env status | skill add <skill-key> <env-name> [env-name...] [--policy auto|off] | skill list [--global]'
+const HELP = new Map<string, string>([
+  ['', `Manage hev Skill Environments for the current DSH Session.
 
-/** Owns live Environment selection and the optional `/hev` command. */
+Commands:
+  /hev env create <name>
+  /hev env list
+  /hev env use <id-or-name>
+  /hev env status
+  /hev env quit
+  /hev skill add <skill-key> <env-name> [env-name...] [--policy auto|off]
+  /hev skill list [--global]
+
+Use /hev help env or /hev help skill for details.`],
+  ['env', `Manage Environments for the current DSH Session.
+
+  /hev env create <name>       Create an Environment without activating it.
+  /hev env list                List DSH Environments.
+  /hev env use <id-or-name>    Select exactly one Environment.
+  /hev env status              Show the current selection.
+  /hev env quit                Move non-base to base, or base to inactive.`],
+  ['env create', 'usage: /hev env create <lowercase-kebab-case-name>'],
+  ['env list', 'usage: /hev env list'],
+  ['env use', 'usage: /hev env use <environment-id-or-name>'],
+  ['env status', 'usage: /hev env status'],
+  ['env quit', 'usage: /hev env quit'],
+  ['skill', `Manage Skill bindings in hev Environments.
+
+  /hev skill add <skill-key> <env-name> [env-name...] [--policy auto|off]
+      Bind a native Skill; this does not install the Skill or activate an Environment.
+  /hev skill list              List bindings in the current Environment.
+  /hev skill list --global     List native DSH-discoverable Skills.`],
+  ['skill add', 'usage: /hev skill add <skill-key> <env-name> [env-name...] [--policy auto|off]'],
+  ['skill list', 'usage: /hev skill list [--global]'],
+])
+/** Provides DSH Session access to Core-owned Environment selection and the optional `/hev` command. */
 export class EnvironmentController extends Service {
   static Config: z<Config> = z.object({
     executable: z.string(),
   })
 
-  private readonly environmentIdBySession = new WeakMap<Session, EnvironmentId>()
   private readonly cli: HevCliClient
 
   /**
@@ -73,14 +113,15 @@ export class EnvironmentController extends Service {
     ctx.inject(['commands'], (commandCtx) => {
       commandCtx.commands.register({
         name: 'hev',
-        description: 'Manage skill environments',
-        input: { hint: 'env create | env list | env use | env quit | env status | skill add | skill list' },
+        description: 'Manage Skill Environments for the current Session',
+        input: { hint: 'help | env create/list/use/status/quit | skill add/list' },
         handler: async ({ agent, rawInput, signal }) => {
           try {
             const words = rawInput.trim().split(/\s+/u).filter(word => word.length > 0)
             return await this.executeCommand(agent, words, signal)
           } catch (error: unknown) {
-            return { kind: 'error', text: renderFailure(error) }
+            this.ctx.logger.warn(`hev command failed: ${renderDiagnostic(error)}`)
+            return { kind: 'error', text: renderPrompt(error) }
           }
         },
       })
@@ -98,11 +139,8 @@ export class EnvironmentController extends Service {
     signal?: AbortSignal,
   ): Promise<Environment | undefined> {
     const operationSignal = signal ?? new AbortController().signal
-    const environmentId = this.environmentIdBySession.get(session)
-    if (environmentId === undefined) return undefined
-    const environment = await this.cli.use(environmentId, operationSignal)
-    this.environmentIdBySession.set(session, environment.id)
-    return environment
+    const current = await this.cli.current(String(session.id), operationSignal)
+    return current.environment ?? undefined
   }
   /**
    * Resolve and atomically select one Environment for a live agent.
@@ -117,9 +155,9 @@ export class EnvironmentController extends Service {
     signal?: AbortSignal,
   ): Promise<Environment> {
     const operationSignal = signal ?? new AbortController().signal
-    const environment = await this.cli.use(name, operationSignal)
-    this.environmentIdBySession.set(agent.session, environment.id)
-    return environment
+    const current = await this.cli.use(name, String(agent.session.id), operationSignal)
+    if (current.environment === null) throw new Error('hev env use returned an inactive Session')
+    return current.environment
   }
 
   /** Leave the current Environment tier for one live agent.
@@ -128,15 +166,45 @@ export class EnvironmentController extends Service {
    * @returns `base` after leaving a non-base Environment, or `undefined` after leaving `base` or when already inactive.
    */
   async quit(agent: Agent, signal?: AbortSignal): Promise<Environment | undefined> {
-    const selectedId = this.environmentIdBySession.get(agent.session)
-    if (selectedId === undefined) return undefined
-    if (selectedId === 'base') {
-      this.environmentIdBySession.delete(agent.session)
-      return undefined
+    const current = await this.cli.quit(
+      String(agent.session.id),
+      signal ?? new AbortController().signal,
+    )
+    return current.environment ?? undefined
+  }
+
+  /** Create an Environment through the shared Core. */
+  async create(name: string, signal: AbortSignal): Promise<CreatedEnvironment> {
+    return await this.cli.create(name, signal)
+  }
+
+  /** List Environments through the shared Core. */
+  async list(signal: AbortSignal): Promise<readonly EnvironmentSummary[]> {
+    return await this.cli.listEnvironments(signal)
+  }
+
+  /** Bind one Skill to one or more Environments through the shared Core. */
+  async addSkill(
+    skillKey: string,
+    environments: readonly string[],
+    policy: SkillPolicyKind,
+    signal: AbortSignal,
+  ): Promise<AddedEnvironmentSkill> {
+    return await this.cli.addSkill(skillKey, environments, policy, signal)
+  }
+
+  /** List the unfiltered native DSH Skill catalog for one live Agent. */
+  async listGlobalSkills(agent: Agent, signal: AbortSignal): Promise<readonly SkillSummary[]> {
+    const skills = this.ctx.get('skills') as Partial<GlobalSkillReader> | undefined
+    if (typeof skills?.listAll !== 'function') {
+      throw new Error('hev global Skill listing requires the hev Skill Registry')
     }
-    const base = await this.cli.defaultEnvironment(signal ?? new AbortController().signal)
-    this.environmentIdBySession.set(agent.session, base.id)
-    return base
+    const cwd = agent.session.header.cwd
+    return await skills.listAll({
+      scope: agent,
+      signal,
+      ...(cwd === undefined ? {} : { cwd }),
+    })
   }
 
   private async executeCommand(
@@ -144,83 +212,80 @@ export class EnvironmentController extends Service {
     words: readonly string[],
     signal: AbortSignal,
   ): Promise<{ kind: 'success'; text?: string } | { kind: 'error'; text: string }> {
+    const help = requestedHelp(words)
+    if (help !== undefined) return { kind: 'success', text: help }
     if (words[0] === 'skill' && words[1] === 'list' && words.length === 3 && words[2] === '--global') {
-      const skills = this.ctx.get('skills') as Partial<GlobalSkillReader> | undefined
-      if (typeof skills?.listAll !== 'function') {
-        throw new Error('hev skill list --global requires the hev Skill Registry')
-      }
-      const cwd = agent.session.header.cwd
-      const available = await skills.listAll({
-        scope: agent,
-        signal,
-        ...(cwd === undefined ? {} : { cwd }),
-      })
-      return {
-        kind: 'success',
-        text: available.length === 0
-          ? 'global: no skills available'
-          : ['global:', ...available.map(skill => `- ${skill.name}`)].join('\n'),
-      }
+      return { kind: 'success', text: renderGlobalSkills(await this.listGlobalSkills(agent, signal)) }
     }
     if (words[0] === 'skill' && words[1] === 'list' && words.length === 2) {
-      const environment = await this.current(agent.session, signal)
-      if (environment === undefined) return { kind: 'success', text: 'hev not activated' }
-      return {
-        kind: 'success',
-        text: environment.skills.length === 0
-          ? `${environment.name}: no skills configured`
-          : [
-              `${environment.name}:`,
-              ...environment.skills.map(skill => `- ${skill.skillKey} (${skill.policy.kind})`),
-            ].join('\n'),
-      }
+      return { kind: 'success', text: renderEnvironmentSkills(await this.current(agent.session, signal)) }
     }
     if (words[0] === 'env' && words[1] === 'list' && words.length === 2) {
-      const environments = await this.cli.listEnvironments(signal)
-      return {
-        kind: 'success',
-        text: ['environments:', ...environments.map(environment => (
-          `- ${environment.name} (${environment.id} rev ${String(environment.revision)})`
-        ))].join('\n'),
-      }
+      const environments = await this.list(signal)
+      return { kind: 'success', text: renderEnvironmentList(environments) }
     }
     if (words[0] === 'env' && words[1] === 'quit' && words.length === 2) {
       const environment = await this.quit(agent, signal)
-      return {
-        kind: 'success',
-        text: environment === undefined
-          ? 'hev not activated'
-          : `${environment.name} (${environment.id} rev ${String(environment.revision)})`,
-      }
+      return { kind: 'success', text: renderEnvironment(environment) }
     }
     if (words[0] === 'env' && words[1] === 'status' && words.length === 2) {
       const environment = await this.current(agent.session, signal)
-      return {
-        kind: 'success',
-        text: environment === undefined
-          ? 'hev not activated'
-          : `${environment.name} (${environment.id} rev ${String(environment.revision)})`,
-      }
+      return { kind: 'success', text: renderEnvironment(environment) }
     }
     if (words[0] === 'env' && words[1] === 'use') {
       const name = words[2]
       if (words.length !== 3 || name === undefined || name.startsWith('-')) {
-        return { kind: 'error', text: USAGE }
+        return { kind: 'error', text: nearestHelp(words) }
       }
       const environment = await this.use(agent, name, signal)
-      return {
-        kind: 'success',
-        text: `${environment.name} (${environment.id} rev ${String(environment.revision)})`,
-      }
+      return { kind: 'success', text: renderEnvironment(environment) }
     }
     if (words[0] === 'env' && words[1] === 'create' && words.length === 3) {
-      return { kind: 'success', text: await this.cli.create(words[2] as string, signal) }
+      return { kind: 'success', text: (await this.create(words[2] as string, signal)).message }
     }
     if (words[0] === 'skill' && words[1] === 'add' && validSkillAdd(words)) {
-      return { kind: 'success', text: await this.cli.addSkill(words, signal) }
+      const policyIndex = words.indexOf('--policy', 3)
+      const environmentEnd = policyIndex < 0 ? words.length : policyIndex
+      const policy = policyIndex < 0 ? 'auto' : words[policyIndex + 1] as SkillPolicyKind
+      const result = await this.addSkill(
+        words[2] as string,
+        words.slice(3, environmentEnd),
+        policy,
+        signal,
+      )
+      return { kind: 'success', text: result.message }
     }
-    return { kind: 'error', text: USAGE }
+    return { kind: 'error', text: nearestHelp(words) }
   }
+
+}
+
+function renderEnvironment(environment: Environment | undefined): string {
+  return environment === undefined
+    ? 'hev not activated'
+    : `${environment.name} (${environment.id} rev ${String(environment.revision)})`
+}
+
+function renderEnvironmentList(environments: readonly { name: string; id: string; revision: number }[]): string {
+  return ['environments:', ...environments.map(environment => (
+    `- ${environment.name} (${environment.id} rev ${String(environment.revision)})`
+  ))].join('\n')
+}
+
+function renderEnvironmentSkills(environment: Environment | undefined): string {
+  if (environment === undefined) return 'hev not activated'
+  return environment.skills.length === 0
+    ? `${environment.name}: no skills configured`
+    : [
+        `${environment.name}:`,
+        ...environment.skills.map(skill => `- ${skill.skillKey} (${skill.policy.kind})`),
+      ].join('\n')
+}
+
+function renderGlobalSkills(skills: readonly SkillSummary[]): string {
+  return skills.length === 0
+    ? 'global: no skills available'
+    : ['global:', ...skills.map(skill => `- ${skill.name}`)].join('\n')
 }
 
 function validSkillAdd(words: readonly string[]): boolean {
@@ -232,15 +297,35 @@ function validSkillAdd(words: readonly string[]): boolean {
     || (policyIndex === words.length - 2 && (words[policyIndex + 1] === 'auto' || words[policyIndex + 1] === 'off'))
 }
 
-function renderFailure(error: unknown): string {
-  if (error instanceof HevCliError) {
-    return `hev: ${String(error.statusCode)}: ${error.message}${error.prompt === '' ? '' : ` (${error.prompt})`}`
+function requestedHelp(words: readonly string[]): string | undefined {
+  if (words.length === 0) return HELP.get('')
+  if (words[0] === 'help') return HELP.get(words.slice(1).join(' ')) ?? HELP.get('')
+  if (words.at(-1) === 'help' || words.at(-1) === '--help') {
+    return HELP.get(words.slice(0, -1).join(' ')) ?? HELP.get('')
   }
+  return undefined
+}
+
+function nearestHelp(words: readonly string[]): string {
+  return HELP.get(words.slice(0, 2).join(' '))
+    ?? HELP.get(words[0] ?? '')
+    ?? HELP.get('')
+    ?? 'usage: /hev help'
+}
+
+function renderDiagnostic(error: unknown): string {
+  if (error instanceof HevCliError) return `${String(error.statusCode)}: ${error.message}`
   try {
-    return `hev: ${String(error)}`
+    return String(error)
   } catch {
-    return 'hev: <unrenderable failure>'
+    return '<unrenderable failure>'
   }
+}
+
+function renderPrompt(error: unknown): string {
+  return error instanceof HevCliError && error.prompt !== ''
+    ? error.prompt
+    : 'Retry the hev operation. If it still fails, inspect the DSH logs.'
 }
 
 export default EnvironmentController

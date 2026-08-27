@@ -33,6 +33,7 @@ function sessionAgent(id: string): Agent {
 
 function environment(skills: Array<{ skillKey: string; kind: 'auto' | 'off' }>): Environment {
   return {
+    source: 'dsh',
     id: EnvironmentId('env-coding'),
     name: 'coding',
     revision: 1,

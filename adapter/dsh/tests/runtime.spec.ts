@@ -10,14 +10,17 @@ import type { Environment, NativeCommandRunner } from '../src/hev-runtime/index.
 import HevSkillRegistry from '../src/hev-skill-registry/index.ts'
 
 const signal = new AbortController().signal
-
-function response(environment: Environment): string {
+function sessionResponse(
+  sessionId: string,
+  environment: Environment | null,
+  message = 'session status resolved',
+): string {
   return JSON.stringify({
     schemaVersion: 2,
     code: 200,
-    message: 'environment resolved',
+    message,
     prompt: '',
-    data: { environment },
+    data: { session: { source: 'dsh', sessionId, environment } },
   })
 }
 
@@ -27,6 +30,7 @@ function success(message: string, data: unknown): string {
 
 function environment(id: string, revision: number, skills = ['code-review'], name = 'coding'): Environment {
   return {
+    source: 'dsh',
     id: EnvironmentId(id),
     name,
     revision,
@@ -61,7 +65,7 @@ async function world(runner: NativeCommandRunner) {
 describe('@slimzeo/hev-dsh-plugin/hev-runtime', () => {
   it('uses the package-local platform binary by default', async () => {
     const runner = vi.fn<NativeCommandRunner>(async () => ({
-      stdout: response(environment('base', 1, [], 'base')),
+      stdout: sessionResponse('bundled-binary', environment('base', 1, [], 'base'), 'environment selected'),
       stderr: '',
     }))
     const runtime = new EnvironmentController(new Context(), {}, { runner })
@@ -72,15 +76,15 @@ describe('@slimzeo/hev-dsh-plugin/hev-runtime', () => {
     const executable = process.platform === 'win32' ? 'hev.exe' : 'hev'
     expect(runner).toHaveBeenCalledWith(
       expect.stringContaining(join('bin', `${process.platform}-${process.arch}`, executable)),
-      ['env', 'use', 'base', '--output', 'json'],
+      ['--source', 'dsh', 'env', 'use', 'base', '--session-id', 'bundled-binary', '--output', 'json'],
       signal,
     )
   })
 
-  it('uses exact use argv, stores canonical IDs, and rereads current revisions', async () => {
+  it('uses exact Session-aware argv and rereads current revisions', async () => {
     let revision = 2
     const runner = vi.fn<NativeCommandRunner>(async () => ({
-      stdout: response(environment('env_canonical', revision)),
+      stdout: sessionResponse('one', environment('env_canonical', revision)),
       stderr: '',
     }))
     const { runtime } = await world(runner)
@@ -91,41 +95,51 @@ describe('@slimzeo/hev-dsh-plugin/hev-runtime', () => {
     const selected = await runtime.use(owner, 'coding', signal)
     expect(selected.revision).toBe(2)
     expect(runner).toHaveBeenNthCalledWith(1, 'hev-test', [
-      'env', 'use', 'coding', '--output', 'json',
+      '--source', 'dsh', 'env', 'use', 'coding', '--session-id', 'one', '--output', 'json',
     ], signal)
 
     revision = 3
     expect((await runtime.current(session, signal))?.revision).toBe(3)
     expect(runner).toHaveBeenNthCalledWith(2, 'hev-test', [
-      'env', 'use', 'env_canonical', '--output', 'json',
+      '--source', 'dsh', 'env', 'status', '--session-id', 'one', '--output', 'json',
     ], signal)
   })
 
-  it('keeps an unselected Session inactive and isolates exact Session overrides', async () => {
-    const runner = vi.fn<NativeCommandRunner>(async () => ({
-      stdout: response(environment('env_1', 1, ['code-review'])),
-      stderr: '',
-    }))
+  it('uses stable Session IDs and keeps different IDs isolated', async () => {
+    const selectedIds = new Set<string>()
+    const runner = vi.fn<NativeCommandRunner>(async (_command, args) => {
+      const sessionIndex = args.indexOf('--session-id')
+      const sessionId = args[sessionIndex + 1] as string
+      if (args.includes('use')) selectedIds.add(sessionId)
+      return {
+        stdout: sessionResponse(
+          sessionId,
+          selectedIds.has(sessionId) ? environment('env_1', 1, ['code-review']) : null,
+        ),
+        stderr: '',
+      }
+    })
     const { runtime } = await world(runner)
-    const selected = Session.create(SessionId('same'))
-    const impostor = Session.create(SessionId('same'))
+    const selected = Session.create(SessionId('selected'))
+    const other = Session.create(SessionId('other'))
 
-    await expect(runtime.current(impostor, signal)).resolves.toBeUndefined()
-    expect(runner).not.toHaveBeenCalled()
+    await expect(runtime.current(other, signal)).resolves.toBeUndefined()
 
     await runtime.use(agent(selected), 'coding', signal)
 
     expect((await runtime.current(selected, signal))?.id).toBe('env_1')
-    await expect(runtime.current(impostor, signal)).resolves.toBeUndefined()
+    await expect(runtime.current(other, signal)).resolves.toBeUndefined()
     expect(runner.mock.calls.map(call => call[1])).toEqual([
-      ['env', 'use', 'coding', '--output', 'json'],
-      ['env', 'use', 'env_1', '--output', 'json'],
+      ['--source', 'dsh', 'env', 'status', '--session-id', 'other', '--output', 'json'],
+      ['--source', 'dsh', 'env', 'use', 'coding', '--session-id', 'selected', '--output', 'json'],
+      ['--source', 'dsh', 'env', 'status', '--session-id', 'selected', '--output', 'json'],
+      ['--source', 'dsh', 'env', 'status', '--session-id', 'other', '--output', 'json'],
     ])
   })
 
-  it('preserves the previous IDs across structured and malformed CLI failures', async () => {
+  it('surfaces structured and malformed CLI failures without adapter state', async () => {
     const outputs: Array<{ stdout: string; reject?: boolean }> = [
-      { stdout: response(environment('env_good', 1)) },
+      { stdout: sessionResponse('cli-rollback', environment('env_good', 1), 'environment selected') },
       {
         stdout: JSON.stringify({
           schemaVersion: 2, code: 404, message: 'missing', prompt: 'create it', data: {},
@@ -133,7 +147,7 @@ describe('@slimzeo/hev-dsh-plugin/hev-runtime', () => {
         reject: true,
       },
       { stdout: '{bad json' },
-      { stdout: response(environment('env_good', 5)) },
+      { stdout: sessionResponse('cli-rollback', environment('env_good', 5)) },
     ]
     const runner = vi.fn<NativeCommandRunner>(async () => {
       const output = outputs.shift()
@@ -152,41 +166,84 @@ describe('@slimzeo/hev-dsh-plugin/hev-runtime', () => {
     expect((await runtime.current(owner.session, signal))?.revision).toBe(5)
   })
 
+  it('returns Core prompts from slash-command failures and logs diagnostics', async () => {
+    const runner = vi.fn<NativeCommandRunner>(async () => {
+      const stdout = JSON.stringify({
+        schemaVersion: 2,
+        code: 404,
+        message: 'environment not found: missing',
+        prompt: 'List Environments and retry with an existing name.',
+        data: {},
+      })
+      throw Object.assign(new Error('exit 1'), { stdout, stderr: '' })
+    })
+    const ctx = new Context()
+    await ctx.plugin(AgentRegistry)
+    await ctx.plugin(CommandRuntime)
+    const warnings: string[] = []
+    ctx.logger.warn = ((message: unknown) => { warnings.push(String(message)) }) as typeof ctx.logger.warn
+    class TestEnvironmentController extends EnvironmentController {
+      constructor(pluginContext: Context) {
+        super(pluginContext, { executable: 'hev-test' }, { runner })
+      }
+    }
+    await ctx.plugin(TestEnvironmentController)
+    const owner = agent(Session.create(SessionId('prompt-command')))
+    ctx.agents.register(owner)
+
+    await expect(ctx.commands.execute(owner, '/hev env use missing', [], signal)).resolves.toMatchObject({
+      result: { kind: 'error', text: 'List Environments and retry with an existing name.' },
+    })
+    expect(warnings).toEqual(['hev command failed: 404: environment not found: missing'])
+  })
+
   it('forwards commands and applies the two-level quit transition', async () => {
+    let current: Environment | null = null
     const runner = vi.fn<NativeCommandRunner>(async (_command, args) => {
-      if (args[0] === 'env' && args[1] === 'create') {
+      const command = args.slice(2, -2)
+      if (command[0] === 'env' && command[1] === 'create') {
         return {
           stdout: success('environment created', { environment: environment('env_created', 1, []) }),
           stderr: '',
         }
       }
-      if (args[0] === 'skill' && args[1] === 'add') {
+      if (command[0] === 'skill' && command[1] === 'add') {
         return {
           stdout: success('skill added to environment', {
             environmentSkill: { skillKey: 'code-review', policy: { kind: 'off' } },
             environments: [
-              { id: 'env_created', name: 'coding', revision: 2 },
-              { id: 'env_writing', name: 'writing', revision: 4 },
+              { source: 'dsh', id: 'env_created', name: 'coding', revision: 2 },
+              { source: 'dsh', id: 'env_writing', name: 'writing', revision: 4 },
             ],
           }),
           stderr: '',
         }
       }
-      if (args[0] === 'env' && args[1] === 'list') {
+      if (command[0] === 'env' && command[1] === 'list') {
         return {
           stdout: success('environments listed', {
             environments: [
-              { id: 'base', name: 'base', revision: 1 },
-              { id: 'env_created', name: 'coding', revision: 2 },
+              { source: 'dsh', id: 'base', name: 'base', revision: 1 },
+              { source: 'dsh', id: 'env_created', name: 'coding', revision: 2 },
             ],
           }),
           stderr: '',
         }
       }
-      if (args[0] === 'env' && args[1] === 'use' && (args[2] === '--output' || args[2] === 'base')) {
-        return { stdout: response(environment('base', 1, [], 'base')), stderr: '' }
+      if (command[0] === 'env' && command[1] === 'quit') {
+        const id = command[3] as string
+        current = current !== null && current.id !== 'base'
+          ? environment('base', 1, [], 'base')
+          : null
+        return { stdout: sessionResponse(id, current, 'session environment changed'), stderr: '' }
       }
-      return { stdout: response(environment('env_created', 2)), stderr: '' }
+      if (command[0] === 'env' && command[1] === 'use') {
+        const id = command[4] as string
+        current = environment('env_created', 2)
+        return { stdout: sessionResponse(id, current, 'environment selected'), stderr: '' }
+      }
+      const id = command[3] as string
+      return { stdout: sessionResponse(id, current), stderr: '' }
     })
     const ctx = new Context()
     await ctx.plugin(AgentRegistry)
@@ -211,6 +268,12 @@ describe('@slimzeo/hev-dsh-plugin/hev-runtime', () => {
 
     await expect(ctx.commands.execute(owner, '/hev env status', [], signal))
       .resolves.toMatchObject({ result: { kind: 'success', text: 'hev not activated' } })
+    await expect(ctx.commands.execute(owner, '/hev help env use', [], signal))
+      .resolves.toMatchObject({
+        result: { kind: 'success', text: 'usage: /hev env use <environment-id-or-name>' },
+      })
+    await expect(ctx.commands.execute(owner, '/hev skill --help', [], signal))
+      .resolves.toMatchObject({ result: { kind: 'success', text: expect.stringContaining('/hev skill add') } })
     await expect(ctx.commands.execute(owner, '/hev skill list', [], signal))
       .resolves.toMatchObject({ result: { kind: 'success', text: 'hev not activated' } })
     await expect(ctx.commands.execute(owner, '/hev skill list --global', [], signal))
@@ -253,17 +316,22 @@ describe('@slimzeo/hev-dsh-plugin/hev-runtime', () => {
     await expect(ctx.commands.execute(owner, '/hev env status extra', [], signal))
       .resolves.toMatchObject({ result: { kind: 'error', text: expect.stringContaining('env status') } })
     await expect(ctx.commands.execute(owner, '/hev env use coding writing', [], signal))
-      .resolves.toMatchObject({ result: { kind: 'error', text: expect.stringContaining('env use <id-or-name>') } })
+      .resolves.toMatchObject({ result: { kind: 'error', text: expect.stringContaining('env use <environment-id-or-name>') } })
 
     expect(runner.mock.calls.map(call => call[1])).toEqual([
-      ['env', 'list', '--output', 'json'],
-      ['env', 'create', 'coding', '--output', 'json'],
-      ['skill', 'add', 'code-review', 'coding', 'writing', '--policy', 'off', '--output', 'json'],
-      ['env', 'use', 'coding', '--output', 'json'],
-      ['env', 'use', 'env_created', '--output', 'json'],
-      ['env', 'use', '--output', 'json'],
-      ['env', 'use', 'base', '--output', 'json'],
-      ['env', 'use', 'base', '--output', 'json'],
+      ['--source', 'dsh', 'env', 'status', '--session-id', 'commands', '--output', 'json'],
+      ['--source', 'dsh', 'env', 'status', '--session-id', 'commands', '--output', 'json'],
+      ['--source', 'dsh', 'env', 'list', '--output', 'json'],
+      ['--source', 'dsh', 'env', 'create', 'coding', '--output', 'json'],
+      ['--source', 'dsh', 'skill', 'add', 'code-review', 'coding', 'writing', '--policy', 'off', '--output', 'json'],
+      ['--source', 'dsh', 'env', 'use', 'coding', '--session-id', 'commands', '--output', 'json'],
+      ['--source', 'dsh', 'env', 'status', '--session-id', 'commands', '--output', 'json'],
+      ['--source', 'dsh', 'env', 'quit', '--session-id', 'commands', '--output', 'json'],
+      ['--source', 'dsh', 'env', 'status', '--session-id', 'commands', '--output', 'json'],
+      ['--source', 'dsh', 'env', 'status', '--session-id', 'commands', '--output', 'json'],
+      ['--source', 'dsh', 'env', 'quit', '--session-id', 'commands', '--output', 'json'],
+      ['--source', 'dsh', 'env', 'status', '--session-id', 'commands', '--output', 'json'],
+      ['--source', 'dsh', 'env', 'quit', '--session-id', 'commands', '--output', 'json'],
     ])
 
     await fiber.dispose()
@@ -277,26 +345,29 @@ describe('@slimzeo/hev-dsh-plugin/hev-runtime', () => {
     const client = new HevCliClient('hev-test', runner)
 
     for (const environmentRef of ['', ' coding', 'bad name', '-flag']) {
-      await expect(client.use(environmentRef, signal)).rejects.toMatchObject({ statusCode: StatusCode.InvalidArgument })
+      await expect(client.use(environmentRef, 'session', signal)).rejects.toMatchObject({ statusCode: StatusCode.InvalidArgument })
     }
     await expect(client.create('Bad Name', signal)).rejects.toMatchObject({ statusCode: StatusCode.InvalidArgument })
     expect(runner).not.toHaveBeenCalled()
 
-    await expect(client.use('coding', signal)).rejects.toMatchObject({ statusCode: StatusCode.Unavailable })
+    await expect(client.use('coding', 'session', signal)).rejects.toMatchObject({ statusCode: StatusCode.Unavailable })
   })
 
   it('strictly rejects malformed CLI v2 environments with protocol status 502', async () => {
     const invalid: unknown[] = [
-      { schemaVersion: 1, code: 200, message: 'ok', prompt: '', data: { environment: environment('env_1', 1) } },
+      { schemaVersion: 2, code: 200, message: 'ok', prompt: '', data: { session: { source: 'codex', sessionId: 'invalid', environment: { ...environment('env_1', 1), source: 'codex' } } } },
+      { schemaVersion: 1, code: 200, message: 'ok', prompt: '', data: { session: { source: 'dsh', sessionId: 'invalid', environment: environment('env_1', 1) } } },
       { schemaVersion: 2, code: 200, message: 'ok', prompt: '', data: {} },
-      { schemaVersion: 2, code: 200, message: 'ok', prompt: 'unexpected', data: { environment: environment('env_1', 1) } },
-      { schemaVersion: 2, code: 200, message: 'ok', prompt: '', data: { environment: { ...environment(' ', 1) } } },
-      { schemaVersion: 2, code: 200, message: 'ok', prompt: '', data: { environment: { ...environment('env_1', 1), name: 'Bad Name' } } },
-      { schemaVersion: 2, code: 200, message: 'ok', prompt: '', data: { environment: { ...environment('env_1', 1), revision: 0 } } },
-      { schemaVersion: 2, code: 200, message: 'ok', prompt: '', data: { environment: { ...environment('env_1', 1), revision: 1.5 } } },
-      { schemaVersion: 2, code: 200, message: 'ok', prompt: '', data: { environment: { ...environment('env_1', 1), skills: [{ skillKey: 'Bad Skill', policy: { kind: 'auto' } }] } } },
-      { schemaVersion: 2, code: 200, message: 'ok', prompt: '', data: { environment: { ...environment('env_1', 1), skills: [{ skillKey: 'code-review', policy: { kind: 'always' } }] } } },
-      { schemaVersion: 2, code: 200, message: 'ok', prompt: '', data: { environment: { ...environment('env_1', 1), skills: [{ skillKey: 'code-review', policy: { kind: 'auto' } }, { skillKey: 'code-review', policy: { kind: 'off' } }] } } },
+      { schemaVersion: 2, code: 200, message: 'ok', prompt: 'unexpected', data: { session: { source: 'dsh', sessionId: 'invalid', environment: environment('env_1', 1) } } },
+      { schemaVersion: 2, code: 200, message: 'ok', prompt: '', data: { session: { source: 'dsh', sessionId: '', environment: environment('env_1', 1) } } },
+      { schemaVersion: 2, code: 200, message: 'ok', prompt: '', data: { session: { source: 'dsh', sessionId: 'other', environment: environment('env_1', 1) } } },
+      { schemaVersion: 2, code: 200, message: 'ok', prompt: '', data: { session: { source: 'dsh', sessionId: 'invalid', environment: { ...environment(' ', 1) } } } },
+      { schemaVersion: 2, code: 200, message: 'ok', prompt: '', data: { session: { source: 'dsh', sessionId: 'invalid', environment: { ...environment('env_1', 1), name: 'Bad Name' } } } },
+      { schemaVersion: 2, code: 200, message: 'ok', prompt: '', data: { session: { source: 'dsh', sessionId: 'invalid', environment: { ...environment('env_1', 1), revision: 0 } } } },
+      { schemaVersion: 2, code: 200, message: 'ok', prompt: '', data: { session: { source: 'dsh', sessionId: 'invalid', environment: { ...environment('env_1', 1), revision: 1.5 } } } },
+      { schemaVersion: 2, code: 200, message: 'ok', prompt: '', data: { session: { source: 'dsh', sessionId: 'invalid', environment: { ...environment('env_1', 1), skills: [{ skillKey: 'Bad Skill', policy: { kind: 'auto' } }] } } } },
+      { schemaVersion: 2, code: 200, message: 'ok', prompt: '', data: { session: { source: 'dsh', sessionId: 'invalid', environment: { ...environment('env_1', 1), skills: [{ skillKey: 'code-review', policy: { kind: 'always' } }] } } } },
+      { schemaVersion: 2, code: 200, message: 'ok', prompt: '', data: { session: { source: 'dsh', sessionId: 'invalid', environment: { ...environment('env_1', 1), skills: [{ skillKey: 'code-review', policy: { kind: 'auto' } }, { skillKey: 'code-review', policy: { kind: 'off' } }] } } } },
     ]
     for (const envelope of invalid) {
       const runner: NativeCommandRunner = async () => ({ stdout: JSON.stringify(envelope), stderr: '' })
@@ -309,10 +380,10 @@ describe('@slimzeo/hev-dsh-plugin/hev-runtime', () => {
   it('strictly rejects malformed Environment lists with protocol status 502', async () => {
     const invalid: unknown[] = [
       [],
-      [{ id: 'base', name: 'base', revision: 0 }],
+      [{ source: 'dsh', id: 'base', name: 'base', revision: 0 }],
       [
-        { id: 'base', name: 'base', revision: 1 },
-        { id: 'base', name: 'coding', revision: 1 },
+        { source: 'dsh', id: 'base', name: 'base', revision: 1 },
+        { source: 'dsh', id: 'base', name: 'coding', revision: 1 },
       ],
     ]
     for (const environments of invalid) {

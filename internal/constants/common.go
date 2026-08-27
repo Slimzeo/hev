@@ -6,6 +6,10 @@ const (
 
 	CLIResponseSchemaVersion      = 2
 	EnvironmentStoreSchemaVersion = 1
+	SessionStoreSchemaVersion     = 1
+
+	EnvironmentStoreFileName = "environments.json"
+	SessionStoreFileName     = "session-bindings.json"
 
 	BaseEnvironmentID       = "base"
 	BaseEnvironmentName     = "base"

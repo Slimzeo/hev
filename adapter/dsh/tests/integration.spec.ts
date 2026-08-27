@@ -12,10 +12,14 @@ import AgentRegistry, { Inbox } from '@deepseek-ai/dsh-agent'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { composeEntries, loadOverlayPatches } from '@deepseek-ai/dsh-app-boot'
 import CommandRuntime from '@deepseek-ai/dsh-commands'
+import { CallId } from '@deepseek-ai/dsh-llm'
 import { Session, SessionId } from '@deepseek-ai/dsh-session'
 import SkillRegistry from '@deepseek-ai/dsh-skill'
+import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
+import ToolRuntime from '@deepseek-ai/dsh-tools'
 import EnvironmentController from '@slimzeo/hev-dsh-plugin/hev-runtime'
 import HevSkillRegistry from '@slimzeo/hev-dsh-plugin/hev-skill-registry'
+import * as HevTool from '@slimzeo/hev-dsh-plugin/hev-tool'
 
 const execFileAsync = promisify(execFile)
 const adapterRoot = fileURLToPath(new URL('..', import.meta.url))
@@ -65,7 +69,7 @@ describe('hev DSH bundle', () => {
       cwd: hevRoot,
       env: { ...process.env, GOCACHE: '/private/tmp/hev-go-cache' },
     })
-    vi.stubEnv('HOME', home)
+    vi.stubEnv('DSH_HOME', home)
 
     const warnings: string[] = []
     const entries = composeEntries([
@@ -79,8 +83,11 @@ describe('hev DSH bundle', () => {
       'agent',
       'commands',
       'skill',
+      'system-prompt',
+      'tools',
       'hev-runtime',
       'hev-skill-registry',
+      'hev-tool',
     ])
     const selected = entries.filter(entry => entry.id !== undefined && selectedIds.has(entry.id))
     const configPath = join(temporaryRoot, 'cordis.json')
@@ -94,9 +101,12 @@ describe('hev DSH bundle', () => {
     const modules = new Map<string, unknown>([
       ['@deepseek-ai/dsh-agent', AgentRegistry],
       ['@deepseek-ai/dsh-commands', CommandRuntime],
+      ['@deepseek-ai/dsh-system-prompt', SystemPrompt],
+      ['@deepseek-ai/dsh-tools', ToolRuntime],
       ['@deepseek-ai/dsh-skill', SkillRegistry],
       ['@slimzeo/hev-dsh-plugin/hev-runtime', EnvironmentController],
       ['@slimzeo/hev-dsh-plugin/hev-skill-registry', HevSkillRegistry],
+      ['@slimzeo/hev-dsh-plugin/hev-tool', HevTool],
     ])
     ctx.loader.internal = {
       version: 'v2',
@@ -120,6 +130,7 @@ describe('hev DSH bundle', () => {
     expect(rows.get('skill')?.fiber).toBeUndefined()
     expect(rows.get('hev-runtime')?.fiber).toBeDefined()
     expect(rows.get('hev-skill-registry')?.fiber).toBeDefined()
+    expect(rows.get('hev-tool')?.fiber).toBeDefined()
 
     for (const name of ['allowed-skill', 'off-skill', 'outside-skill']) {
       ctx.skills.register({
@@ -156,11 +167,12 @@ describe('hev DSH bundle', () => {
       .resolves.toMatchObject({ result: { kind: 'success', text: 'environments:\n- base (base rev 1)' } })
     const store = JSON.parse(await readFile(join(home, '.hev', 'environments.json'), 'utf8')) as {
       schemaVersion: number
-      environments: Array<{ id: string; name: string; skills: Array<{ skillKey: string }> }>
+      environments: Array<{ source: string; id: string; name: string; skills: Array<{ skillKey: string }> }>
     }
     expect(store.schemaVersion).toBe(1)
     expect(store.environments.map(environment => environment.name)).toContain('base')
     expect(store.environments.find(environment => environment.name === 'base')).toMatchObject({
+      source: 'dsh',
       id: 'base',
       name: 'base',
       skills: [{ skillKey: 'hev-guide' }],
@@ -181,8 +193,26 @@ describe('hev DSH bundle', () => {
       signal,
     )).resolves.toMatchObject({ result: { kind: 'success' } })
 
-    await expect(ctx.commands.execute(owner, '/hev env use coding', [], signal))
-      .resolves.toMatchObject({ result: { kind: 'success' } })
+    const useResult = await ctx.tools.execute({
+      signal,
+      callId: CallId('hev-use'),
+      name: 'hev_env_use',
+      arguments: { environment: 'coding' },
+      agent: owner,
+    })
+    expect(useResult).toMatchObject({ isError: false, value: expect.stringMatching(/^coding /u) })
+    const resumed = agent('hev-integration')
+    await expect(ctx.environment.current(resumed.session, signal))
+      .resolves.toMatchObject({ name: 'coding', revision: 3 })
+    const bindings = JSON.parse(await readFile(join(home, '.hev', 'session-bindings.json'), 'utf8')) as {
+      schemaVersion: number
+      bindings: Array<{ sessionId: string; environmentId: string }>
+    }
+    expect(bindings).toMatchObject({
+      schemaVersion: 1,
+      bindings: [{ sessionId: 'hev-integration', environmentId: expect.stringMatching(/^env_/u) }],
+    })
+    expect(bindings.bindings[0]).not.toHaveProperty('source')
     await expect(ctx.commands.execute(owner, '/hev env status', [], signal))
       .resolves.toMatchObject({ result: { kind: 'success', text: expect.stringMatching(/^coding \(env_[^)]+ rev 3\)$/u) } })
     await expect(ctx.commands.execute(owner, '/hev skill list', [], signal))

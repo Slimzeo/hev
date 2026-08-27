@@ -5,10 +5,21 @@
 import { runNativeCommand } from '@deepseek-ai/dsh-native-command'
 import type { NativeCommandRunner } from '@deepseek-ai/dsh-native-command'
 import { EnvironmentId, StatusCode } from './environment.ts'
-import type { Environment, EnvironmentSkillSpec, EnvironmentSummary, FailureStatusCode } from './environment.ts'
+import type {
+  AddedEnvironmentSkill,
+  CreatedEnvironment,
+  Environment,
+  EnvironmentSession,
+  EnvironmentSkillSpec,
+  EnvironmentSummary,
+  FailureStatusCode,
+  Source,
+  SkillPolicyKind,
+} from './environment.ts'
 
 const SCHEMA_VERSION = 2
 const NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u
+const SOURCE: Source = 'dsh'
 
 /** Structured failure returned by hev or raised while decoding its output. */
 export class HevCliError extends Error {
@@ -57,46 +68,72 @@ export class HevCliClient {
     private readonly runner: NativeCommandRunner = runNativeCommand,
   ) {}
 
-  /** Resolve the default Environment through the CLI.
+  /** Resolve one host Session's current hev state.
+   * @param sessionId - opaque host Session ID.
    * @param signal - operation cancellation signal.
-   * @returns the latest validated default Environment.
+   * @returns the latest validated Session state.
    */
-  async defaultEnvironment(signal: AbortSignal): Promise<Environment> {
-    const response = await this.invoke(['env', 'use', '--output', 'json'], signal)
-    return decodeEnvironment(response.data.environment)
+  async current(sessionId: string, signal: AbortSignal): Promise<EnvironmentSession> {
+    validateSessionId(sessionId)
+    const response = await this.invoke(['env', 'status', '--session-id', sessionId], signal)
+    return decodeSession(response.data.session, sessionId)
   }
 
-  /** Resolve one Environment through the CLI.
+  /** Select one Environment for a host Session through the CLI.
    * @param name - Environment ID or name.
+   * @param sessionId - opaque host Session ID.
    * @param signal - operation cancellation signal.
-   * @returns the latest validated Environment.
+   * @returns the committed Session state.
    */
   async use(
     name: string,
+    sessionId: string,
     signal: AbortSignal,
-  ): Promise<Environment> {
+  ): Promise<EnvironmentSession> {
     if (name.length === 0
       || name.trim() !== name
       || /\s/u.test(name)
       || name.startsWith('-')) {
-      throw new HevCliError(StatusCode.InvalidArgument, 'environment reference must be a non-empty argv value without whitespace')
+      throw new HevCliError(
+        StatusCode.InvalidArgument,
+        'environment reference must be a non-empty argv value without whitespace',
+        'Call hev_env_list, then retry with one existing Environment ID or lowercase kebab-case name.',
+      )
     }
-    const response = await this.invoke(['env', 'use', name, '--output', 'json'], signal)
-    return decodeEnvironment(response.data.environment)
+    validateSessionId(sessionId)
+    const response = await this.invoke(['env', 'use', name, '--session-id', sessionId], signal)
+    return decodeSession(response.data.session, sessionId)
+  }
+
+  /** Leave one Environment tier for a host Session.
+   * @param sessionId - opaque host Session ID.
+   * @param signal - operation cancellation signal.
+   * @returns the committed Session state.
+   */
+  async quit(sessionId: string, signal: AbortSignal): Promise<EnvironmentSession> {
+    validateSessionId(sessionId)
+    const response = await this.invoke(['env', 'quit', '--session-id', sessionId], signal)
+    return decodeSession(response.data.session, sessionId)
   }
 
   /** Create one empty Environment through the CLI.
    * @param name - lowercase kebab-case Environment name.
    * @param signal - operation cancellation signal.
-   * @returns the CLI's success message.
+   * @returns the CLI message and created Environment.
    */
-  async create(name: string, signal: AbortSignal): Promise<string> {
+  async create(name: string, signal: AbortSignal): Promise<CreatedEnvironment> {
     if (!NAME.test(name)) {
-      throw new HevCliError(StatusCode.InvalidArgument, 'environment name must be lowercase kebab-case')
+      throw new HevCliError(
+        StatusCode.InvalidArgument,
+        'environment name must be lowercase kebab-case',
+        'Retry with a lowercase kebab-case Environment name such as "coding-tools".',
+      )
     }
-    const response = await this.invoke(['env', 'create', name, '--output', 'json'], signal)
-    decodeEnvironment(response.data.environment)
-    return response.message
+    const response = await this.invoke(['env', 'create', name], signal)
+    return Object.freeze({
+      message: response.message,
+      environment: decodeEnvironment(response.data.environment),
+    })
   }
 
   /** List all current Environments through the CLI.
@@ -104,7 +141,7 @@ export class HevCliClient {
    * @returns validated Environment metadata ordered by the Core.
    */
   async listEnvironments(signal: AbortSignal): Promise<readonly EnvironmentSummary[]> {
-    const response = await this.invoke(['env', 'list', '--output', 'json'], signal)
+    const response = await this.invoke(['env', 'list'], signal)
     const environments = array(response.data.environments, 'data.environments')
     if (environments.length === 0) protocol('data.environments must not be empty')
     const seen = new Set<string>()
@@ -118,32 +155,76 @@ export class HevCliClient {
   }
 
   /** Add one Skill binding through the CLI.
-   * @param args - exact `skill add` argv excluding the JSON-output suffix.
+   * @param skillKey - logical Skill key.
+   * @param environmentNames - target Environment names.
+   * @param policy - Environment-owned Skill policy.
    * @param signal - operation cancellation signal.
-   * @returns the CLI's success message.
+   * @returns the committed binding and target summaries.
    */
-  async addSkill(args: readonly string[], signal: AbortSignal): Promise<string> {
-    const response = await this.invoke([...args, '--output', 'json'], signal)
-    decodeSkill(response.data.environmentSkill, 'data.environmentSkill')
+  async addSkill(
+    skillKey: string,
+    environmentNames: readonly string[],
+    policy: SkillPolicyKind,
+    signal: AbortSignal,
+  ): Promise<AddedEnvironmentSkill> {
+    if (!NAME.test(skillKey)) {
+      throw new HevCliError(
+        StatusCode.InvalidArgument,
+        'skill key must be lowercase kebab-case',
+        'Call hev_skill_list with global=true, then retry with a listed lowercase kebab-case Skill key.',
+      )
+    }
+    if (environmentNames.length === 0 || environmentNames.some(name => !NAME.test(name))) {
+      throw new HevCliError(
+        StatusCode.InvalidArgument,
+        'at least one lowercase kebab-case environment name is required',
+        'Call hev_env_list, then provide one or more listed Environment names.',
+      )
+    }
+    if (new Set(environmentNames).size !== environmentNames.length) {
+      throw new HevCliError(
+        StatusCode.InvalidArgument,
+        'environment names must not contain duplicates',
+        'Retry with each target Environment listed only once.',
+      )
+    }
+    const response = await this.invoke([
+      'skill', 'add', skillKey, ...environmentNames, '--policy', policy,
+    ], signal)
+    const environmentSkill = decodeSkill(response.data.environmentSkill, 'data.environmentSkill')
     const environments = array(response.data.environments, 'data.environments')
     if (environments.length === 0) protocol('data.environments must not be empty')
     const seen = new Set<string>()
-    environments.forEach((value, index) => {
+    const summaries = environments.map((value, index) => {
       const environment = decodeEnvironmentSummary(value, `data.environments[${String(index)}]`)
       if (seen.has(environment.id)) protocol(`duplicate environment id "${environment.id}"`)
       seen.add(environment.id)
+      return environment
     })
-    return response.message
+    return Object.freeze({
+      message: response.message,
+      environmentSkill,
+      environments: Object.freeze(summaries),
+    })
   }
 
   private async invoke(args: readonly string[], signal: AbortSignal): Promise<BaseResponse> {
     let stdout: string
     try {
-      stdout = (await this.runner(this.executable, args, signal)).stdout
+      stdout = (await this.runner(
+        this.executable,
+        ['--source', SOURCE, ...args, '--output', 'json'],
+        signal,
+      )).stdout
     } catch (error: unknown) {
       const candidate = (error as RunnerFailure | null)?.stdout ?? ''
       if (candidate.trim() === '') {
-        throw new HevCliError(StatusCode.Unavailable, renderThrown(error), '', error)
+        throw new HevCliError(
+          StatusCode.Unavailable,
+          renderThrown(error),
+          'Retry the hev operation. If it still fails, verify that the bundled hev executable can run.',
+          error,
+        )
       }
       return decodeResponse(candidate, error)
     }
@@ -156,7 +237,12 @@ function decodeResponse(stdout: string, cause?: unknown): BaseResponse {
   try {
     response = JSON.parse(stdout) as BaseResponse
   } catch (error: unknown) {
-    throw new HevCliError(StatusCode.ProtocolError, 'hev CLI stdout is not valid JSON', '', cause ?? error)
+    throw new HevCliError(
+      StatusCode.ProtocolError,
+      'hev CLI stdout is not valid JSON',
+      'Update or reinstall the hev plugin so the adapter and Core use the same CLI protocol.',
+      cause ?? error,
+    )
   }
   record(response, 'response')
   const schemaVersion = integer(response.schemaVersion, 'schemaVersion')
@@ -177,10 +263,11 @@ function decodeResponse(stdout: string, cause?: unknown): BaseResponse {
   return response
 }
 
-function decodeEnvironment(value: BaseResponse['data']): Environment {
-  const jsonPath = 'data.environment'
+function decodeEnvironment(value: BaseResponse['data'], jsonPath = 'data.environment'): Environment {
   const input = record(value, jsonPath)
 
+  const source = decodeSource(input.source, `${jsonPath}.source`)
+  if (source !== SOURCE) protocol(`${jsonPath}.source must be "${SOURCE}"`)
   const id = environmentId(input.id, `${jsonPath}.id`)
   const name = nonEmptyString(input.name, `${jsonPath}.name`)
   if (!NAME.test(name)) protocol(`${jsonPath}.name must be lowercase kebab-case`)
@@ -195,6 +282,7 @@ function decodeEnvironment(value: BaseResponse['data']): Environment {
     return decoded
   })
   return Object.freeze({
+    source,
     id: EnvironmentId(id),
     name,
     revision,
@@ -202,14 +290,41 @@ function decodeEnvironment(value: BaseResponse['data']): Environment {
   })
 }
 
+function decodeSession(value: BaseResponse['data'], expectedSessionId: string): EnvironmentSession {
+  const jsonPath = 'data.session'
+  const input = record(value, jsonPath)
+  const source = decodeSource(input.source, `${jsonPath}.source`)
+  if (source !== SOURCE) protocol(`${jsonPath}.source must be "${SOURCE}"`)
+  const sessionId = nonEmptyString(input.sessionId, `${jsonPath}.sessionId`)
+  if (sessionId !== expectedSessionId) protocol(`${jsonPath}.sessionId does not match the requested Session`)
+  const environment = input.environment === null
+    ? null
+    : decodeEnvironment(input.environment, `${jsonPath}.environment`)
+  if (environment !== null && environment.source !== source) {
+    protocol(`${jsonPath}.environment.source must match ${jsonPath}.source`)
+  }
+  return Object.freeze({ source, sessionId, environment })
+}
+
 function decodeEnvironmentSummary(value: BaseResponse['data'], jsonPath: string): EnvironmentSummary {
   const input = record(value, jsonPath)
+  const source = decodeSource(input.source, `${jsonPath}.source`)
+  if (source !== SOURCE) protocol(`${jsonPath}.source must be "${SOURCE}"`)
   const id = environmentId(input.id, `${jsonPath}.id`)
   const name = nonEmptyString(input.name, `${jsonPath}.name`)
   if (!NAME.test(name)) protocol(`${jsonPath}.name must be lowercase kebab-case`)
   const revision = integer(input.revision, `${jsonPath}.revision`)
   if (revision < 1) protocol(`${jsonPath}.revision must be positive`)
-  return Object.freeze({ id: EnvironmentId(id), name, revision })
+  return Object.freeze({ source, id: EnvironmentId(id), name, revision })
+}
+
+function decodeSource(value: BaseResponse['data'], jsonPath: string): Source {
+  const source = string(value, jsonPath)
+  if (source !== 'standalone' && source !== 'dsh' && source !== 'claude-code'
+    && source !== 'codex' && source !== 'opencode') {
+    protocol(`${jsonPath} is not a supported source`)
+  }
+  return source
 }
 
 function decodeSkill(value: BaseResponse['data'], jsonPath: string): EnvironmentSkillSpec {
@@ -249,6 +364,16 @@ function environmentId(value: BaseResponse['data'], jsonPath: string): string {
   return decoded
 }
 
+function validateSessionId(sessionId: string): void {
+  if (sessionId.length === 0) {
+    throw new HevCliError(
+      StatusCode.InvalidArgument,
+      'session id must not be empty',
+      'Retry from an active DSH Session.',
+    )
+  }
+}
+
 function integer(value: BaseResponse['data'], jsonPath: string): number {
   if (typeof value !== 'number' || !Number.isSafeInteger(value)) protocol(`${jsonPath} must be a safe integer`)
   return value
@@ -262,7 +387,11 @@ function isCliFailureStatus(value: number): value is FailureStatusCode {
 }
 
 function protocol(message: string): never {
-  throw new HevCliError(StatusCode.ProtocolError, message)
+  throw new HevCliError(
+    StatusCode.ProtocolError,
+    message,
+    'Update or reinstall the hev plugin so the adapter and Core use the same CLI protocol.',
+  )
 }
 
 function renderThrown(value: unknown): string {

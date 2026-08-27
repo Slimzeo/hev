@@ -10,7 +10,7 @@ import (
 )
 
 // AddSkill binds one logical Skill to all named Environments atomically.
-func (s *Service) AddSkill(
+func (s *EnvironmentService) AddSkill(
 	ctx context.Context,
 	skill model.Skill,
 	environmentNames []string,
@@ -19,21 +19,22 @@ func (s *Service) AddSkill(
 	if !keyPattern.MatchString(string(skill.Key)) {
 		return model.EnvironmentSkill{}, nil, commonresponse.NewError(
 			commonresponse.StatusCodeInvalidArgument,
-			"invalid skill key %q: use lowercase kebab-case",
-			skill.Key,
+			fmt.Sprintf("invalid skill key %q", skill.Key),
+			"Use a lowercase kebab-case Skill key such as \"code-review\".",
 		)
 	}
 	if len(environmentNames) == 0 {
 		return model.EnvironmentSkill{}, nil, commonresponse.NewError(
 			commonresponse.StatusCodeInvalidArgument,
 			"at least one environment is required",
+			"Provide at least one target Environment name after listing the available Environments.",
 		)
 	}
 	if policy.Kind != constants.SkillPolicyAuto && policy.Kind != constants.SkillPolicyOff {
 		return model.EnvironmentSkill{}, nil, commonresponse.NewError(
 			commonresponse.StatusCodeInvalidArgument,
-			"unsupported skill policy: %s",
-			policy.Kind,
+			fmt.Sprintf("unsupported skill policy: %s", policy.Kind),
+			"Retry with --policy auto or --policy off.",
 		)
 	}
 
@@ -42,15 +43,15 @@ func (s *Service) AddSkill(
 		if !keyPattern.MatchString(name) {
 			return model.EnvironmentSkill{}, nil, commonresponse.NewError(
 				commonresponse.StatusCodeInvalidArgument,
-				"invalid environment name %q: use lowercase kebab-case",
-				name,
+				fmt.Sprintf("invalid environment name %q", name),
+				"Use lowercase kebab-case Environment names such as \"coding-tools\".",
 			)
 		}
 		if _, exists := seen[name]; exists {
 			return model.EnvironmentSkill{}, nil, commonresponse.NewError(
 				commonresponse.StatusCodeInvalidArgument,
-				"environment %q was supplied more than once",
-				name,
+				fmt.Sprintf("environment %q was supplied more than once", name),
+				"Provide each target Environment only once.",
 			)
 		}
 		seen[name] = struct{}{}
@@ -63,8 +64,8 @@ func (s *Service) AddSkill(
 				if existing.SkillKey == binding.SkillKey {
 					return commonresponse.NewError(
 						commonresponse.StatusCodeConflict,
-						"skill %q is already bound to environment %q",
-						binding.SkillKey, current.Name,
+						fmt.Sprintf("skill %q is already bound to environment %q", binding.SkillKey, current.Name),
+						"The Skill is already configured for this Environment; do not add the same binding again.",
 					)
 				}
 			}

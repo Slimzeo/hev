@@ -6,11 +6,13 @@
   "data": {
     "environments": [
       {
+        "source": "standalone",
         "id": "base",
         "name": "base",
         "revision": 1
       },
       {
+        "source": "standalone",
         "id": "env_coding",
         "name": "coding",
         "revision": 2

@@ -4,6 +4,9 @@
 
 import type { Branded } from '@deepseek-ai/dsh-brand'
 
+/** Coding Agent platforms supported by hev Core. */
+export type Source = 'standalone' | 'dsh' | 'claude-code' | 'codex' | 'opencode'
+
 /** Numeric statuses used by the hev CLI protocol and adapter-local failures. */
 export const StatusCode = Object.freeze({
   Ok: 200,
@@ -48,16 +51,38 @@ export interface EnvironmentSkillSpec {
 
 /** Latest Environment record returned by the hev store. */
 export interface Environment {
+  readonly source: Source
   readonly id: EnvironmentId
   readonly name: string
   readonly revision: number
   readonly skills: readonly EnvironmentSkillSpec[]
 }
 
+/** Resolved hev state for one host Session. */
+export interface EnvironmentSession {
+  readonly source: Source
+  readonly sessionId: string
+  readonly environment: Environment | null
+}
+
 /** Current Environment metadata returned by `hev env list`. */
 export interface EnvironmentSummary {
+  readonly source: Source
   readonly id: EnvironmentId
   readonly name: string
   readonly revision: number
+}
+
+/** Result of adding one Skill binding to one or more Environments. */
+export interface AddedEnvironmentSkill {
+  readonly message: string
+  readonly environmentSkill: EnvironmentSkillSpec
+  readonly environments: readonly EnvironmentSummary[]
+}
+
+/** Result of creating one Environment. */
+export interface CreatedEnvironment {
+  readonly message: string
+  readonly environment: Environment
 }
 

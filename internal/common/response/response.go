@@ -25,34 +25,23 @@ type BaseResponse struct {
 	Code          StatusCode `json:"code"`
 	Message       string     `json:"message"`
 	Prompt        string     `json:"prompt"`
-	Data          any        `json:"data"`
 }
 
-// Prompt returns the recovery guidance for a CLI status.
-func Prompt(statusCode StatusCode) string {
-	switch statusCode {
-	case StatusCodeInvalidArgument:
-		return "run hev --help to inspect command usage"
-	case StatusCodeNotFound:
-		return "create the environment before using it"
-	case StatusCodeConflict:
-		return "inspect the existing environment configuration"
-	default:
-		return "retry the command or inspect stderr diagnostics"
+// Success constructs the common fields of one successful response.
+func Success(message string) BaseResponse {
+	return BaseResponse{
+		SchemaVersion: constants.CLIResponseSchemaVersion,
+		Code:          StatusCodeOK,
+		Message:       message,
+		Prompt:        "",
 	}
 }
 
-// Write encodes one CLI v2 response.
-func Write(output io.Writer, code StatusCode, message, prompt string, data any) error {
+// Write encodes one concrete CLI v2 response.
+func Write(output io.Writer, value any) error {
 	encoder := json.NewEncoder(output)
 	encoder.SetEscapeHTML(false)
-	if err := encoder.Encode(BaseResponse{
-		SchemaVersion: constants.CLIResponseSchemaVersion,
-		Code:          code,
-		Message:       message,
-		Prompt:        prompt,
-		Data:          data,
-	}); err != nil {
+	if err := encoder.Encode(value); err != nil {
 		return fmt.Errorf("encode response: %w", err)
 	}
 	return nil

@@ -6,10 +6,13 @@
     { "$ref": "#/$defs/createEnvironmentResponse" },
     { "$ref": "#/$defs/listEnvironmentsResponse" },
     { "$ref": "#/$defs/addEnvironmentSkillResponse" },
-    { "$ref": "#/$defs/useEnvironmentResponse" },
+    { "$ref": "#/$defs/sessionResponse" },
     { "$ref": "#/$defs/errorResponse" }
   ],
   "$defs": {
+    "source": {
+      "enum": ["standalone", "dsh", "claude-code", "codex", "opencode"]
+    },
     "policy": {
       "type": "object",
       "additionalProperties": false,
@@ -30,8 +33,9 @@
     "environment": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "name", "revision", "skills"],
+      "required": ["source", "id", "name", "revision", "skills"],
       "properties": {
+        "source": { "$ref": "#/$defs/source" },
         "id": { "type": "string", "minLength": 1 },
         "name": { "type": "string", "minLength": 1 },
         "revision": { "type": "integer", "minimum": 1 },
@@ -44,11 +48,27 @@
     "environmentSummary": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "name", "revision"],
+      "required": ["source", "id", "name", "revision"],
       "properties": {
+        "source": { "$ref": "#/$defs/source" },
         "id": { "type": "string", "minLength": 1 },
         "name": { "type": "string", "minLength": 1 },
         "revision": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "session": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "sessionId", "environment"],
+      "properties": {
+        "source": { "$ref": "#/$defs/source" },
+        "sessionId": { "type": "string", "minLength": 1 },
+        "environment": {
+          "oneOf": [
+            { "$ref": "#/$defs/environment" },
+            { "type": "null" }
+          ]
+        }
       }
     },
     "successBase": {
@@ -115,17 +135,24 @@
         }
       }
     },
-    "useEnvironmentResponse": {
+    "sessionResponse": {
       "$ref": "#/$defs/successBase",
       "unevaluatedProperties": false,
       "properties": {
-        "message": { "const": "environment resolved" },
+        "message": {
+          "enum": [
+            "environment selected",
+            "session status resolved",
+            "session environment changed",
+            "session skills listed"
+          ]
+        },
         "data": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["environment"],
+          "required": ["session"],
           "properties": {
-            "environment": { "$ref": "#/$defs/environment" }
+            "session": { "$ref": "#/$defs/session" }
           }
         }
       }

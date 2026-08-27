@@ -1,6 +1,8 @@
 package common
 
 import (
+	"fmt"
+
 	"github.com/Slimzeo/hev/internal/common/response"
 	"github.com/Slimzeo/hev/internal/constants"
 	"github.com/spf13/cobra"
@@ -55,7 +57,11 @@ func ValidateOutput(command *cobra.Command) error {
 		return err
 	}
 	if format != constants.OutputText && format != constants.OutputJSON {
-		return response.NewError(response.StatusCodeInvalidArgument, "unsupported output format %q", format)
+		return response.NewError(
+			response.StatusCodeInvalidArgument,
+			fmt.Sprintf("unsupported output format %q", format),
+			"Use --output text or --output json.",
+		)
 	}
 	return nil
 }
@@ -63,7 +69,11 @@ func ValidateOutput(command *cobra.Command) error {
 func classifyArgs(validate cobra.PositionalArgs) cobra.PositionalArgs {
 	return func(command *cobra.Command, args []string) error {
 		if err := validate(command, args); err != nil {
-			return response.NewError(response.StatusCodeInvalidArgument, "%v", err)
+			return response.NewError(
+				response.StatusCodeInvalidArgument,
+				err.Error(),
+				fmt.Sprintf("Run %q to inspect this command's required arguments.", command.CommandPath()+" --help"),
+			)
 		}
 		return nil
 	}

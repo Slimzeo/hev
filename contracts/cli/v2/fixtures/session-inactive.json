@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 2,
+  "code": 200,
+  "message": "session status resolved",
+  "prompt": "",
+  "data": {
+    "session": {
+      "source": "standalone",
+      "sessionId": "session-1",
+      "environment": null
+    }
+  }
+}
