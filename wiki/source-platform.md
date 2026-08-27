@@ -59,7 +59,7 @@ type Session struct {
 - `environments.json`：该平台的 Environment。每条 Environment 持久化自己的 source。
 - `session-bindings.json`：该平台的 `sessionId -> environmentId` 绑定。文件已经由 source 目录隔离，因此 binding 不重复保存 source。
 
-Core 必须拒绝 source 不受支持、Environment source 与当前 Store source 不一致、Session 绑定指向不存在 Environment 等情况。不同 source 下相同的 Session ID 和 Environment 名称互不影响。
+Core 必须拒绝 source 不受支持、Environment source 与当前 Store source 不一致等情况。删除非 base Environment 时，已有 Session binding 暂时保留稳定 Environment ID；该 Session 下一次读取状态时会将缺失选择原子替换为 base。不同 source 下相同的 Session ID 和 Environment 名称互不影响。
 
 ## 调用职责
 

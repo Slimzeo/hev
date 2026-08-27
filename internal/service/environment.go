@@ -17,17 +17,15 @@ var keyPattern = regexp.MustCompile(constants.KebabCasePattern)
 type EnvironmentStore interface {
 	Source() model.Source
 	Create(context.Context, model.Environment) (model.Environment, error)
+	Rename(context.Context, model.EnvironmentID, string) (model.Environment, error)
+	Delete(context.Context, model.EnvironmentID) (model.Environment, error)
 	Default(context.Context) (model.Environment, error)
 	List(context.Context) ([]model.Environment, error)
 	GetByIDOrName(context.Context, string) (model.Environment, error)
 	UpdateMany(context.Context, []string, func([]model.Environment) error) ([]model.Environment, error)
 	GetSessionEnvironment(context.Context, string) (model.EnvironmentID, bool, error)
 	SetSessionEnvironment(context.Context, string, model.EnvironmentID) error
-	UpdateSessionEnvironment(
-		context.Context,
-		string,
-		func(model.EnvironmentID, bool) (model.EnvironmentID, bool),
-	) (bool, error)
+	LeaveSessionEnvironment(context.Context, string, model.EnvironmentID, model.EnvironmentID) (model.EnvironmentID, bool, error)
 }
 
 // IDGenerator supplies stable Environment IDs.
@@ -73,6 +71,57 @@ func (s *EnvironmentService) Create(ctx context.Context, name string) (model.Env
 		}},
 	}
 	return s.store.Create(ctx, created)
+}
+
+// Rename changes one non-base Environment name while preserving its ID and bindings.
+func (s *EnvironmentService) Rename(
+	ctx context.Context,
+	environmentRef string,
+	newName string,
+) (model.Environment, error) {
+	if !keyPattern.MatchString(newName) {
+		return model.Environment{}, commonresponse.NewError(
+			commonresponse.StatusCodeInvalidArgument,
+			fmt.Sprintf("invalid environment name %q", newName),
+			"Use a lowercase kebab-case Environment name such as coding-tools.",
+		)
+	}
+	current, err := s.Resolve(ctx, environmentRef)
+	if err != nil {
+		return model.Environment{}, fmt.Errorf("resolve environment before rename: %w", err)
+	}
+	if current.ID == constants.BaseEnvironmentID {
+		return model.Environment{}, commonresponse.NewError(
+			commonresponse.StatusCodeConflict,
+			"base environment cannot be renamed",
+			"Choose a non-base Environment to rename.",
+		)
+	}
+	renamed, err := s.store.Rename(ctx, current.ID, newName)
+	if err != nil {
+		return model.Environment{}, fmt.Errorf("rename environment: %w", err)
+	}
+	return renamed, nil
+}
+
+// Delete removes one non-base Environment.
+func (s *EnvironmentService) Delete(ctx context.Context, environmentRef string) (model.Environment, error) {
+	current, err := s.Resolve(ctx, environmentRef)
+	if err != nil {
+		return model.Environment{}, fmt.Errorf("resolve environment before delete: %w", err)
+	}
+	if current.ID == constants.BaseEnvironmentID {
+		return model.Environment{}, commonresponse.NewError(
+			commonresponse.StatusCodeConflict,
+			"base environment cannot be deleted",
+			"Choose a non-base Environment to delete.",
+		)
+	}
+	deleted, err := s.store.Delete(ctx, current.ID)
+	if err != nil {
+		return model.Environment{}, fmt.Errorf("delete environment: %w", err)
+	}
+	return deleted, nil
 }
 
 // Default returns the latest default Environment.
@@ -145,6 +194,29 @@ func (s *EnvironmentService) Current(ctx context.Context, sessionID string) (mod
 	}
 	environment, err := s.Resolve(ctx, string(environmentID))
 	if err != nil {
+		if statusCode, classified := commonresponse.StatusCodeOf(err); classified && statusCode == commonresponse.StatusCodeNotFound {
+			base, baseErr := s.Default(ctx)
+			if baseErr != nil {
+				return model.Session{}, fmt.Errorf("resolve base environment for deleted session selection: %w", baseErr)
+			}
+			resolvedID, active, updateErr := s.store.LeaveSessionEnvironment(
+				ctx, sessionID, environmentID, base.ID,
+			)
+			if updateErr != nil {
+				return model.Session{}, fmt.Errorf("replace deleted session environment with base: %w", updateErr)
+			}
+			if !active {
+				return model.Session{Source: s.source, SessionID: sessionID}, nil
+			}
+			if resolvedID == base.ID {
+				return model.Session{Source: s.source, SessionID: sessionID, Environment: &base}, nil
+			}
+			replacement, resolveErr := s.Resolve(ctx, string(resolvedID))
+			if resolveErr != nil {
+				return model.Session{}, fmt.Errorf("resolve concurrent session environment: %w", resolveErr)
+			}
+			return model.Session{Source: s.source, SessionID: sessionID, Environment: &replacement}, nil
+		}
 		return model.Session{}, fmt.Errorf("resolve session environment: %w", err)
 	}
 	return model.Session{Source: s.source, SessionID: sessionID, Environment: &environment}, nil
@@ -152,35 +224,36 @@ func (s *EnvironmentService) Current(ctx context.Context, sessionID string) (mod
 
 // Quit leaves the current Environment tier for a host Session.
 func (s *EnvironmentService) Quit(ctx context.Context, sessionID string) (model.Session, error) {
-	current, err := s.Current(ctx, sessionID)
-	if err != nil {
+	if err := validateSessionID(sessionID); err != nil {
 		return model.Session{}, err
 	}
-	if current.Environment == nil {
-		return current, nil
+	selectedID, found, err := s.store.GetSessionEnvironment(ctx, sessionID)
+	if err != nil {
+		return model.Session{}, fmt.Errorf("read session environment before quit: %w", err)
+	}
+	if !found {
+		return model.Session{Source: s.source, SessionID: sessionID}, nil
 	}
 
 	base, err := s.Default(ctx)
 	if err != nil {
 		return model.Session{}, fmt.Errorf("resolve base environment before quit: %w", err)
 	}
-	active, err := s.store.UpdateSessionEnvironment(
-		ctx,
-		sessionID,
-		func(currentID model.EnvironmentID, found bool) (model.EnvironmentID, bool) {
-			if !found || currentID == base.ID {
-				return "", false
-			}
-			return base.ID, true
-		},
-	)
+	resolvedID, active, err := s.store.LeaveSessionEnvironment(ctx, sessionID, selectedID, base.ID)
 	if err != nil {
 		return model.Session{}, fmt.Errorf("quit session environment: %w", err)
 	}
 	if !active {
 		return model.Session{Source: s.source, SessionID: sessionID}, nil
 	}
-	return model.Session{Source: s.source, SessionID: sessionID, Environment: &base}, nil
+	if resolvedID == base.ID {
+		return model.Session{Source: s.source, SessionID: sessionID, Environment: &base}, nil
+	}
+	replacement, err := s.Resolve(ctx, string(resolvedID))
+	if err != nil {
+		return model.Session{}, fmt.Errorf("resolve concurrent session environment after quit: %w", err)
+	}
+	return model.Session{Source: s.source, SessionID: sessionID, Environment: &replacement}, nil
 }
 
 func validateSessionID(sessionID string) error {

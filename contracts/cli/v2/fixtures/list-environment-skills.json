@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 2,
+  "code": 200,
+  "message": "environment skills listed",
+  "prompt": "",
+  "data": {
+    "environment": {
+      "source": "standalone",
+      "id": "env_coding",
+      "name": "coding",
+      "revision": 2,
+      "skills": [
+        {
+          "skillKey": "code-review",
+          "policy": {
+            "kind": "auto"
+          }
+        }
+      ]
+    }
+  }
+}

@@ -80,8 +80,15 @@ export interface AddedEnvironmentSkill {
   readonly environments: readonly EnvironmentSummary[]
 }
 
-/** Result of creating one Environment. */
-export interface CreatedEnvironment {
+/** Result of removing one Skill binding from one or more Environments. */
+export interface RemovedEnvironmentSkill {
+  readonly message: string
+  readonly skillKey: string
+  readonly environments: readonly EnvironmentSummary[]
+}
+
+/** Result of creating, renaming, or deleting one Environment. */
+export interface EnvironmentResult {
   readonly message: string
   readonly environment: Environment
 }

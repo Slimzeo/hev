@@ -227,11 +227,14 @@ describe('hev DSH bundle', () => {
     await expect(ctx.commands.execute(other, '/hev skill list', [], signal))
       .resolves.toMatchObject({ result: { kind: 'success', text: 'hev not activated' } })
 
+    await expect(ctx.commands.execute(other, '/hev skill list coding', [], signal))
+      .resolves.toMatchObject({ result: { kind: 'success', text: expect.stringContaining('coding:') } })
+
     expect((await ctx.skills.list(view)).map(skill => skill.name)).toEqual(['allowed-skill', 'hev-guide'])
     expect((await ctx.skills.list(otherView)).map(skill => skill.name)).toEqual(allSkillNames)
     expect(await ctx.skills.get('allowed-skill', view)).toMatchObject({ name: 'allowed-skill' })
-    expect(await ctx.skills.get('off-skill', view)).toBeUndefined()
-    expect(await ctx.skills.get('outside-skill', view)).toBeUndefined()
+    expect(await ctx.skills.get('off-skill', view)).toMatchObject({ name: 'off-skill' })
+    expect(await ctx.skills.get('outside-skill', view)).toMatchObject({ name: 'outside-skill' })
     await expect(ctx.commands.execute(owner, '/hev skill list --global', [], signal))
       .resolves.toMatchObject({
         result: {
@@ -239,6 +242,15 @@ describe('hev DSH bundle', () => {
           text: 'global:\n- allowed-skill\n- hev-guide\n- off-skill\n- outside-skill',
         },
       })
+
+    await expect(ctx.commands.execute(owner, '/hev env rename coding review', [], signal))
+      .resolves.toMatchObject({ result: { kind: 'success', text: 'environment renamed' } })
+    await expect(ctx.commands.execute(owner, '/hev env status', [], signal))
+      .resolves.toMatchObject({ result: { kind: 'success', text: expect.stringMatching(/^review /u) } })
+    await expect(ctx.commands.execute(owner, '/hev skill remove off-skill review', [], signal))
+      .resolves.toMatchObject({ result: { kind: 'success', text: 'skill removed from environment' } })
+    await expect(ctx.commands.execute(owner, '/hev skill list review', [], signal))
+      .resolves.toMatchObject({ result: { kind: 'success', text: expect.stringContaining('allowed-skill (auto)') } })
 
     await expect(ctx.commands.execute(owner, '/hev env quit', [], signal))
       .resolves.toMatchObject({ result: { kind: 'success', text: 'base (base rev 1)' } })
@@ -252,5 +264,14 @@ describe('hev DSH bundle', () => {
       .resolves.toMatchObject({ result: { kind: 'success', text: 'hev not activated' } })
     expect((await ctx.skills.list(view)).map(skill => skill.name)).toEqual(allSkillNames)
     expect(await ctx.skills.get('outside-skill', view)).toMatchObject({ name: 'outside-skill' })
+
+    await expect(ctx.commands.execute(owner, '/hev env create scratch', [], signal))
+      .resolves.toMatchObject({ result: { kind: 'success' } })
+    await expect(ctx.commands.execute(owner, '/hev env use scratch', [], signal))
+      .resolves.toMatchObject({ result: { kind: 'success', text: expect.stringMatching(/^scratch /u) } })
+    await expect(ctx.commands.execute(owner, '/hev env delete scratch', [], signal))
+      .resolves.toMatchObject({ result: { kind: 'success', text: 'environment deleted' } })
+    await expect(ctx.commands.execute(owner, '/hev env status', [], signal))
+      .resolves.toMatchObject({ result: { kind: 'success', text: 'base (base rev 1)' } })
   })
 })

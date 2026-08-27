@@ -3,9 +3,10 @@
   "$id": "https://github.com/Slimzeo/hev/contracts/cli/v2/schema.json",
   "title": "hev CLI response v2",
   "oneOf": [
-    { "$ref": "#/$defs/createEnvironmentResponse" },
+    { "$ref": "#/$defs/environmentResponse" },
     { "$ref": "#/$defs/listEnvironmentsResponse" },
     { "$ref": "#/$defs/addEnvironmentSkillResponse" },
+    { "$ref": "#/$defs/removeEnvironmentSkillResponse" },
     { "$ref": "#/$defs/sessionResponse" },
     { "$ref": "#/$defs/errorResponse" }
   ],
@@ -81,11 +82,18 @@
         "prompt": { "const": "" }
       }
     },
-    "createEnvironmentResponse": {
+    "environmentResponse": {
       "$ref": "#/$defs/successBase",
       "unevaluatedProperties": false,
       "properties": {
-        "message": { "const": "environment created" },
+        "message": {
+          "enum": [
+            "environment created",
+            "environment renamed",
+            "environment deleted",
+            "environment skills listed"
+          ]
+        },
         "data": {
           "type": "object",
           "additionalProperties": false,
@@ -107,6 +115,26 @@
           "required": ["environmentSkill", "environments"],
           "properties": {
             "environmentSkill": { "$ref": "#/$defs/environmentSkill" },
+            "environments": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "$ref": "#/$defs/environmentSummary" }
+            }
+          }
+        }
+      }
+    },
+    "removeEnvironmentSkillResponse": {
+      "$ref": "#/$defs/successBase",
+      "unevaluatedProperties": false,
+      "properties": {
+        "message": { "const": "skill removed from environment" },
+        "data": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["skillKey", "environments"],
+          "properties": {
+            "skillKey": { "type": "string", "minLength": 1 },
             "environments": {
               "type": "array",
               "minItems": 1,

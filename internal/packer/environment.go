@@ -44,12 +44,32 @@ type sessionResponse struct {
 
 // WriteCreatedEnvironment writes one Environment creation result.
 func WriteCreatedEnvironment(output io.Writer, jsonOutput bool, environment model.Environment) error {
+	return writeEnvironment(output, jsonOutput, "environment created", "created", environment)
+}
+
+// WriteRenamedEnvironment writes one Environment rename result.
+func WriteRenamedEnvironment(output io.Writer, jsonOutput bool, environment model.Environment) error {
+	return writeEnvironment(output, jsonOutput, "environment renamed", "renamed", environment)
+}
+
+// WriteDeletedEnvironment writes one Environment deletion result.
+func WriteDeletedEnvironment(output io.Writer, jsonOutput bool, environment model.Environment) error {
+	return writeEnvironment(output, jsonOutput, "environment deleted", "deleted", environment)
+}
+
+func writeEnvironment(
+	output io.Writer,
+	jsonOutput bool,
+	message string,
+	verb string,
+	environment model.Environment,
+) error {
 	if !jsonOutput {
-		_, err := fmt.Fprintf(output, "created environment %s (%s)\n", environment.Name, environment.ID)
+		_, err := fmt.Fprintf(output, "%s environment %s (%s)\n", verb, environment.Name, environment.ID)
 		return err
 	}
 	return response.Write(output, environmentResponse{
-		BaseResponse: response.Success("environment created"),
+		BaseResponse: response.Success(message),
 		Data:         environmentData{Environment: environment},
 	})
 }

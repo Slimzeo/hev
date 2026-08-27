@@ -11,9 +11,10 @@ import type { NativeCommandRunner } from './cli.ts'
 import { bundledExecutable } from './executable.ts'
 import type {
   AddedEnvironmentSkill,
-  CreatedEnvironment,
   Environment,
+  EnvironmentResult,
   EnvironmentSummary,
+  RemovedEnvironmentSkill,
   SkillPolicyKind,
 } from './environment.ts'
 
@@ -25,11 +26,12 @@ export { StatusCode } from './environment.ts'
 export type {
   Environment,
   EnvironmentSession,
-  CreatedEnvironment,
+  EnvironmentResult,
   EnvironmentSkillPolicy,
   EnvironmentSkillSpec,
   EnvironmentSummary,
   FailureStatusCode,
+  RemovedEnvironmentSkill,
   Source,
   SkillPolicyKind,
 } from './environment.ts'
@@ -61,22 +63,30 @@ const HELP = new Map<string, string>([
 
 Commands:
   /hev env create <name>
+  /hev env rename <id-or-name> <new-name>
+  /hev env delete <id-or-name>
   /hev env list
   /hev env use <id-or-name>
   /hev env status
   /hev env quit
   /hev skill add <skill-key> <env-name> [env-name...] [--policy auto|off]
-  /hev skill list [--global]
+  /hev skill remove <skill-key> <env-name> [env-name...]
+  /hev skill list [env-name | --global]
 
 Use /hev help env or /hev help skill for details.`],
   ['env', `Manage Environments for the current DSH Session.
 
   /hev env create <name>       Create an Environment without activating it.
+  /hev env rename <old-env> <new-name>
+                                Rename a non-base Environment.
+  /hev env delete <env>        Delete a non-base Environment.
   /hev env list                List DSH Environments.
   /hev env use <id-or-name>    Select exactly one Environment.
   /hev env status              Show the current selection.
   /hev env quit                Move non-base to base, or base to inactive.`],
   ['env create', 'usage: /hev env create <lowercase-kebab-case-name>'],
+  ['env rename', 'usage: /hev env rename <environment-id-or-name> <new-name>'],
+  ['env delete', 'usage: /hev env delete <environment-id-or-name>'],
   ['env list', 'usage: /hev env list'],
   ['env use', 'usage: /hev env use <environment-id-or-name>'],
   ['env status', 'usage: /hev env status'],
@@ -84,11 +94,14 @@ Use /hev help env or /hev help skill for details.`],
   ['skill', `Manage Skill bindings in hev Environments.
 
   /hev skill add <skill-key> <env-name> [env-name...] [--policy auto|off]
-      Bind a native Skill; this does not install the Skill or activate an Environment.
-  /hev skill list              List bindings in the current Environment.
+      Bind a native Skill for automatic discovery; this does not install the Skill or activate an Environment.
+  /hev skill remove <skill-key> <env-name> [env-name...]
+      Remove an existing binding from each target Environment.
+  /hev skill list [env-name]   List one named or current Environment's bindings.
   /hev skill list --global     List native DSH-discoverable Skills.`],
   ['skill add', 'usage: /hev skill add <skill-key> <env-name> [env-name...] [--policy auto|off]'],
-  ['skill list', 'usage: /hev skill list [--global]'],
+  ['skill remove', 'usage: /hev skill remove <skill-key> <env-name> [env-name...]'],
+  ['skill list', 'usage: /hev skill list [environment-id-or-name | --global]'],
 ])
 /** Provides DSH Session access to Core-owned Environment selection and the optional `/hev` command. */
 export class EnvironmentController extends Service {
@@ -114,7 +127,7 @@ export class EnvironmentController extends Service {
       commandCtx.commands.register({
         name: 'hev',
         description: 'Manage Skill Environments for the current Session',
-        input: { hint: 'help | env create/list/use/status/quit | skill add/list' },
+        input: { hint: 'help | env create/rename/delete/list/use/status/quit | skill add/remove/list' },
         handler: async ({ agent, rawInput, signal }) => {
           try {
             const words = rawInput.trim().split(/\s+/u).filter(word => word.length > 0)
@@ -174,8 +187,34 @@ export class EnvironmentController extends Service {
   }
 
   /** Create an Environment through the shared Core. */
-  async create(name: string, signal: AbortSignal): Promise<CreatedEnvironment> {
+  async create(name: string, signal: AbortSignal): Promise<EnvironmentResult> {
     return await this.cli.create(name, signal)
+  }
+
+  /** Rename one Environment through the shared Core.
+   * @param environmentRef - existing Environment ID or name.
+   * @param newName - new lowercase kebab-case name.
+   * @param signal - operation cancellation signal.
+   * @returns the renamed Environment.
+   */
+  async rename(
+    environmentRef: string,
+    newName: string,
+    signal: AbortSignal,
+  ): Promise<EnvironmentResult> {
+    return await this.cli.rename(environmentRef, newName, signal)
+  }
+
+  /** Delete one Environment through the shared Core.
+   * @param environmentRef - existing Environment ID or name.
+   * @param signal - operation cancellation signal.
+   * @returns the deleted Environment.
+   */
+  async deleteEnvironment(
+    environmentRef: string,
+    signal: AbortSignal,
+  ): Promise<EnvironmentResult> {
+    return await this.cli.deleteEnvironment(environmentRef, signal)
   }
 
   /** List Environments through the shared Core. */
@@ -191,6 +230,29 @@ export class EnvironmentController extends Service {
     signal: AbortSignal,
   ): Promise<AddedEnvironmentSkill> {
     return await this.cli.addSkill(skillKey, environments, policy, signal)
+  }
+
+  /** Remove one Skill binding from one or more Environments through the shared Core.
+   * @param skillKey - bound Skill key.
+   * @param environments - target Environment names.
+   * @param signal - operation cancellation signal.
+   * @returns the removed key and updated Environment summaries.
+   */
+  async removeSkill(
+    skillKey: string,
+    environments: readonly string[],
+    signal: AbortSignal,
+  ): Promise<RemovedEnvironmentSkill> {
+    return await this.cli.removeSkill(skillKey, environments, signal)
+  }
+
+  /** Resolve one Environment's Skill bindings without changing a Session.
+   * @param environmentRef - existing Environment ID or name.
+   * @param signal - operation cancellation signal.
+   * @returns the latest Environment record.
+   */
+  async listEnvironmentSkills(environmentRef: string, signal: AbortSignal): Promise<Environment> {
+    return await this.cli.listEnvironmentSkills(environmentRef, signal)
   }
 
   /** List the unfiltered native DSH Skill catalog for one live Agent. */
@@ -220,9 +282,21 @@ export class EnvironmentController extends Service {
     if (words[0] === 'skill' && words[1] === 'list' && words.length === 2) {
       return { kind: 'success', text: renderEnvironmentSkills(await this.current(agent.session, signal)) }
     }
+    if (words[0] === 'skill' && words[1] === 'list' && words.length === 3 && !words[2]?.startsWith('-')) {
+      return {
+        kind: 'success',
+        text: renderEnvironmentSkills(await this.listEnvironmentSkills(words[2] as string, signal)),
+      }
+    }
     if (words[0] === 'env' && words[1] === 'list' && words.length === 2) {
       const environments = await this.list(signal)
       return { kind: 'success', text: renderEnvironmentList(environments) }
+    }
+    if (words[0] === 'env' && words[1] === 'rename' && words.length === 4) {
+      return { kind: 'success', text: (await this.rename(words[2] as string, words[3] as string, signal)).message }
+    }
+    if (words[0] === 'env' && words[1] === 'delete' && words.length === 3) {
+      return { kind: 'success', text: (await this.deleteEnvironment(words[2] as string, signal)).message }
     }
     if (words[0] === 'env' && words[1] === 'quit' && words.length === 2) {
       const environment = await this.quit(agent, signal)
@@ -254,6 +328,9 @@ export class EnvironmentController extends Service {
         signal,
       )
       return { kind: 'success', text: result.message }
+    }
+    if (words[0] === 'skill' && words[1] === 'remove' && validSkillRemove(words)) {
+      return { kind: 'success', text: (await this.removeSkill(words[2] as string, words.slice(3), signal)).message }
     }
     return { kind: 'error', text: nearestHelp(words) }
   }
@@ -295,6 +372,10 @@ function validSkillAdd(words: readonly string[]): boolean {
   if (environmentEnd === 3 || words.slice(3, environmentEnd).some(word => word.startsWith('-'))) return false
   return policyIndex < 0
     || (policyIndex === words.length - 2 && (words[policyIndex + 1] === 'auto' || words[policyIndex + 1] === 'off'))
+}
+
+function validSkillRemove(words: readonly string[]): boolean {
+  return words.length >= 4 && words.slice(2).every(word => !word.startsWith('-'))
 }
 
 function requestedHelp(words: readonly string[]): string | undefined {

@@ -15,6 +15,7 @@ Use the model-facing hev Tools directly and keep their meanings separate:
 
 - `hev_env_status` — show the hev environment selected by this Session.
 - `hev_skill_list` — show bindings in that environment, including `auto` and `off` policies.
+- `hev_skill_list` with an Environment argument — inspect another Environment without selecting it.
 
 Do not infer current availability only from files under `~/.dsh/skills`. Files show installation; the current hev binding controls whether the session catalog can expose them.
 
@@ -45,13 +46,17 @@ Clearly label this as the DSH-discoverable set, not the current environment's en
 
 Use `--policy off` only when the user wants the binding recorded but unavailable to the model.
 
+Use `hev_skill_remove` when the user wants to delete an existing binding. Use `hev_env_rename` and `hev_env_delete` only for non-base Environments.
+
+Do not compose Environments or add an hev-specific cross-Environment invocation command. The active Environment controls automatic model discovery. A user's explicit `/skill-name` invocation remains owned by DSH's native Skill consumer and may load any globally installed user-invocable Skill.
+
 If hev Tools are unavailable, give the user the equivalent `/hev` command to run. Never claim that a Skill was added until the Tool or command succeeds.
 
 ## Explain common states
 
 - Installed + globally discoverable + bound as `auto`: available in the current Session.
-- Installed + globally discoverable + unbound: hidden by hev; add it to the environment.
-- Bound as `off`: intentionally hidden; do not describe it as enabled.
+- Installed + globally discoverable + unbound: hidden from automatic model discovery; add it to the Environment when the model should choose it autonomously. A user may still invoke it explicitly with `/skill-name` when DSH marks it user-invocable.
+- Bound as `off`: intentionally hidden from automatic model discovery; do not describe it as enabled. Explicit user invocation remains a native DSH decision.
 - Bound but absent from DSH discovery and the session catalog: configuration exists, but DSH has no usable Skill definition. Install or repair the Skill first.
 - Different Sessions may select different environments. Always inspect the current Session instead of assuming another Session's selection.
 

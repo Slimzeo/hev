@@ -17,8 +17,8 @@ internal/routers/
   base.go                               Cobra root initialization and execution
   hev.go                                env and skill command registration
 internal/handler/
-  environment.go                       env create, list, use, status, and quit handlers
-  skill.go                             skill add and current-session list handlers
+  environment.go                       env create, rename, delete, list, use, status, and quit handlers
+  skill.go                             skill add, remove, and Environment list handlers
 internal/model/
   environment.go                       Environment data structures
   session.go                           resolved Session Environment state
@@ -40,6 +40,7 @@ contracts/cli/v2/                       process protocol schema and fixtures
 test/hev_test.go                        Go Core tests
 wiki/source-platform.md                 source ownership and storage isolation
 wiki/cli-help-and-prompts.md            CLI help and message/prompt ownership
+wiki/roadmap.md                         implemented boundary and remaining work
 ```
 
 The command path is `main -> routers -> handler -> service -> model`; `main` injects one `EnvironmentDAL` through the `EnvironmentStore` interface, and `packer` owns only CLI response conversion. Session bindings store `sessionId + environmentId`; the service resolves the latest Environment before returning `model.Session`. Host-specific DSH types and the model-facing Tools stay under `adapter/dsh`.
@@ -51,6 +52,7 @@ hev env use coding --session-id session-123
 hev env status --session-id session-123
 hev env quit --session-id session-123
 hev skill list --session-id session-123
+hev skill list coding
 ```
 
 Host adapters internally add a source identifier such as `--source dsh`. The Go entry point maps that trusted source to the host's own `.hev` directory; neither the Agent nor an Environment operation chooses a filesystem path.

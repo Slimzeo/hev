@@ -64,7 +64,7 @@ async function world(
 }
 
 describe('@slimzeo/hev-dsh-plugin/hev-skill-registry', () => {
-  it('filters active Sessions and leaves inactive Sessions unfiltered', async () => {
+  it('filters active catalogs while preserving direct lookup for explicit user invocation', async () => {
     const active = sessionAgent('active')
     const inactive = sessionAgent('inactive')
     let selected = environment([
@@ -99,8 +99,8 @@ describe('@slimzeo/hev-dsh-plugin/hev-skill-registry', () => {
     const view = { scope: active, signal }
     expect((await ctx.skills.list(view)).map(skill => skill.name)).toEqual(['allowed-skill'])
     expect((await ctx.skills.snapshot(view)).skills.map(skill => skill.name)).toEqual(['allowed-skill'])
-    expect(await ctx.skills.get('off-skill', view)).toBeUndefined()
-    expect(await ctx.skills.get('absent-skill', view)).toBeUndefined()
+    expect(await ctx.skills.get('off-skill', view)).toMatchObject({ name: 'off-skill' })
+    expect(await ctx.skills.get('absent-skill', view)).toMatchObject({ name: 'absent-skill' })
     expect(await ctx.skills.get('allowed-skill', view)).toMatchObject({ name: 'allowed-skill' })
     expect((await ctx.skills.listAll(view)).map(skill => skill.name)).toEqual([
       'absent-skill',

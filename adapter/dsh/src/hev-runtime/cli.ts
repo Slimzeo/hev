@@ -7,12 +7,13 @@ import type { NativeCommandRunner } from '@deepseek-ai/dsh-native-command'
 import { EnvironmentId, StatusCode } from './environment.ts'
 import type {
   AddedEnvironmentSkill,
-  CreatedEnvironment,
   Environment,
+  EnvironmentResult,
   EnvironmentSession,
   EnvironmentSkillSpec,
   EnvironmentSummary,
   FailureStatusCode,
+  RemovedEnvironmentSkill,
   Source,
   SkillPolicyKind,
 } from './environment.ts'
@@ -90,16 +91,7 @@ export class HevCliClient {
     sessionId: string,
     signal: AbortSignal,
   ): Promise<EnvironmentSession> {
-    if (name.length === 0
-      || name.trim() !== name
-      || /\s/u.test(name)
-      || name.startsWith('-')) {
-      throw new HevCliError(
-        StatusCode.InvalidArgument,
-        'environment reference must be a non-empty argv value without whitespace',
-        'Call hev_env_list, then retry with one existing Environment ID or lowercase kebab-case name.',
-      )
-    }
+    validateEnvironmentReference(name)
     validateSessionId(sessionId)
     const response = await this.invoke(['env', 'use', name, '--session-id', sessionId], signal)
     return decodeSession(response.data.session, sessionId)
@@ -121,7 +113,7 @@ export class HevCliClient {
    * @param signal - operation cancellation signal.
    * @returns the CLI message and created Environment.
    */
-  async create(name: string, signal: AbortSignal): Promise<CreatedEnvironment> {
+  async create(name: string, signal: AbortSignal): Promise<EnvironmentResult> {
     if (!NAME.test(name)) {
       throw new HevCliError(
         StatusCode.InvalidArgument,
@@ -136,22 +128,53 @@ export class HevCliClient {
     })
   }
 
+  /** Rename one non-base Environment through the CLI.
+   * @param environmentRef - existing Environment ID or name.
+   * @param newName - new lowercase kebab-case name.
+   * @param signal - operation cancellation signal.
+   * @returns the renamed Environment with its stable ID.
+   */
+  async rename(
+    environmentRef: string,
+    newName: string,
+    signal: AbortSignal,
+  ): Promise<EnvironmentResult> {
+    validateEnvironmentReference(environmentRef)
+    if (!NAME.test(newName)) {
+      throw new HevCliError(
+        StatusCode.InvalidArgument,
+        'environment name must be lowercase kebab-case',
+        'Retry with a lowercase kebab-case Environment name such as coding-tools.',
+      )
+    }
+    const response = await this.invoke(['env', 'rename', environmentRef, newName], signal)
+    return Object.freeze({
+      message: response.message,
+      environment: decodeEnvironment(response.data.environment),
+    })
+  }
+
+  /** Delete one non-base Environment through the CLI.
+   * @param environmentRef - existing Environment ID or name.
+   * @param signal - operation cancellation signal.
+   * @returns the deleted Environment.
+   */
+  async deleteEnvironment(environmentRef: string, signal: AbortSignal): Promise<EnvironmentResult> {
+    validateEnvironmentReference(environmentRef)
+    const response = await this.invoke(['env', 'delete', environmentRef], signal)
+    return Object.freeze({
+      message: response.message,
+      environment: decodeEnvironment(response.data.environment),
+    })
+  }
+
   /** List all current Environments through the CLI.
    * @param signal - operation cancellation signal.
    * @returns validated Environment metadata ordered by the Core.
    */
   async listEnvironments(signal: AbortSignal): Promise<readonly EnvironmentSummary[]> {
     const response = await this.invoke(['env', 'list'], signal)
-    const environments = array(response.data.environments, 'data.environments')
-    if (environments.length === 0) protocol('data.environments must not be empty')
-    const seen = new Set<string>()
-    const decoded = environments.map((value, index) => {
-      const environment = decodeEnvironmentSummary(value, `data.environments[${String(index)}]`)
-      if (seen.has(environment.id)) protocol(`duplicate environment id "${environment.id}"`)
-      seen.add(environment.id)
-      return environment
-    })
-    return Object.freeze(decoded)
+    return decodeEnvironmentSummaries(response.data.environments)
   }
 
   /** Add one Skill binding through the CLI.
@@ -167,45 +190,49 @@ export class HevCliClient {
     policy: SkillPolicyKind,
     signal: AbortSignal,
   ): Promise<AddedEnvironmentSkill> {
-    if (!NAME.test(skillKey)) {
-      throw new HevCliError(
-        StatusCode.InvalidArgument,
-        'skill key must be lowercase kebab-case',
-        'Call hev_skill_list with global=true, then retry with a listed lowercase kebab-case Skill key.',
-      )
-    }
-    if (environmentNames.length === 0 || environmentNames.some(name => !NAME.test(name))) {
-      throw new HevCliError(
-        StatusCode.InvalidArgument,
-        'at least one lowercase kebab-case environment name is required',
-        'Call hev_env_list, then provide one or more listed Environment names.',
-      )
-    }
-    if (new Set(environmentNames).size !== environmentNames.length) {
-      throw new HevCliError(
-        StatusCode.InvalidArgument,
-        'environment names must not contain duplicates',
-        'Retry with each target Environment listed only once.',
-      )
-    }
+    validateSkillTargets(skillKey, environmentNames)
     const response = await this.invoke([
       'skill', 'add', skillKey, ...environmentNames, '--policy', policy,
     ], signal)
     const environmentSkill = decodeSkill(response.data.environmentSkill, 'data.environmentSkill')
-    const environments = array(response.data.environments, 'data.environments')
-    if (environments.length === 0) protocol('data.environments must not be empty')
-    const seen = new Set<string>()
-    const summaries = environments.map((value, index) => {
-      const environment = decodeEnvironmentSummary(value, `data.environments[${String(index)}]`)
-      if (seen.has(environment.id)) protocol(`duplicate environment id "${environment.id}"`)
-      seen.add(environment.id)
-      return environment
-    })
     return Object.freeze({
       message: response.message,
       environmentSkill,
-      environments: Object.freeze(summaries),
+      environments: decodeEnvironmentSummaries(response.data.environments),
     })
+  }
+
+  /** Remove one Skill binding from one or more Environments through the CLI.
+   * @param skillKey - bound Skill key.
+   * @param environmentNames - target Environment names.
+   * @param signal - operation cancellation signal.
+   * @returns the removed key and updated Environment summaries.
+   */
+  async removeSkill(
+    skillKey: string,
+    environmentNames: readonly string[],
+    signal: AbortSignal,
+  ): Promise<RemovedEnvironmentSkill> {
+    validateSkillTargets(skillKey, environmentNames)
+    const response = await this.invoke(['skill', 'remove', skillKey, ...environmentNames], signal)
+    const returnedSkillKey = nonEmptyString(response.data.skillKey, 'data.skillKey')
+    if (returnedSkillKey !== skillKey) protocol('data.skillKey must match the requested Skill key')
+    return Object.freeze({
+      message: response.message,
+      skillKey: returnedSkillKey,
+      environments: decodeEnvironmentSummaries(response.data.environments),
+    })
+  }
+
+  /** Resolve one Environment with its Skill bindings without selecting it.
+   * @param environmentRef - existing Environment ID or name.
+   * @param signal - operation cancellation signal.
+   * @returns the latest Environment record.
+   */
+  async listEnvironmentSkills(environmentRef: string, signal: AbortSignal): Promise<Environment> {
+    validateEnvironmentReference(environmentRef)
+    const response = await this.invoke(['skill', 'list', environmentRef], signal)
+    return decodeEnvironment(response.data.environment)
   }
 
   private async invoke(args: readonly string[], signal: AbortSignal): Promise<BaseResponse> {
@@ -318,6 +345,19 @@ function decodeEnvironmentSummary(value: BaseResponse['data'], jsonPath: string)
   return Object.freeze({ source, id: EnvironmentId(id), name, revision })
 }
 
+function decodeEnvironmentSummaries(value: BaseResponse['data']): readonly EnvironmentSummary[] {
+  const environments = array(value, 'data.environments')
+  if (environments.length === 0) protocol('data.environments must not be empty')
+  const seen = new Set<string>()
+  const decoded = environments.map((environment, index) => {
+    const summary = decodeEnvironmentSummary(environment, `data.environments[${String(index)}]`)
+    if (seen.has(summary.id)) protocol(`duplicate environment id "${summary.id}"`)
+    seen.add(summary.id)
+    return summary
+  })
+  return Object.freeze(decoded)
+}
+
 function decodeSource(value: BaseResponse['data'], jsonPath: string): Source {
   const source = string(value, jsonPath)
   if (source !== 'standalone' && source !== 'dsh' && source !== 'claude-code'
@@ -356,6 +396,40 @@ function nonEmptyString(value: BaseResponse['data'], jsonPath: string): string {
   const decoded = string(value, jsonPath)
   if (decoded.length === 0) protocol(`${jsonPath} must not be empty`)
   return decoded
+}
+
+function validateEnvironmentReference(value: string): void {
+  if (value.length === 0 || value.trim() !== value || /\s/u.test(value) || value.startsWith('-')) {
+    throw new HevCliError(
+      StatusCode.InvalidArgument,
+      'environment reference must be a non-empty argv value without whitespace',
+      'Call hev_env_list, then retry with one existing Environment ID or lowercase kebab-case name.',
+    )
+  }
+}
+
+function validateSkillTargets(skillKey: string, environmentNames: readonly string[]): void {
+  if (!NAME.test(skillKey)) {
+    throw new HevCliError(
+      StatusCode.InvalidArgument,
+      'skill key must be lowercase kebab-case',
+      'Call hev_skill_list with global=true, then retry with a listed lowercase kebab-case Skill key.',
+    )
+  }
+  if (environmentNames.length === 0 || environmentNames.some(name => !NAME.test(name))) {
+    throw new HevCliError(
+      StatusCode.InvalidArgument,
+      'at least one lowercase kebab-case environment name is required',
+      'Call hev_env_list, then provide one or more listed Environment names.',
+    )
+  }
+  if (new Set(environmentNames).size !== environmentNames.length) {
+    throw new HevCliError(
+      StatusCode.InvalidArgument,
+      'environment names must not contain duplicates',
+      'Retry with each target Environment listed only once.',
+    )
+  }
 }
 
 function environmentId(value: BaseResponse['data'], jsonPath: string): string {

@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 2,
+  "code": 200,
+  "message": "skill removed from environment",
+  "prompt": "",
+  "data": {
+    "skillKey": "code-review",
+    "environments": [
+      {
+        "source": "standalone",
+        "id": "env_coding",
+        "name": "coding",
+        "revision": 3
+      }
+    ]
+  }
+}

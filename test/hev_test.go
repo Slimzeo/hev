@@ -90,6 +90,64 @@ func TestEnvironmentServiceCreate(t *testing.T) {
 	})
 }
 
+func TestEnvironmentServiceRenameAndDelete(t *testing.T) {
+	stateDir := t.TempDir()
+	store := newTestEnvironmentDAL(stateDir)
+	service := environmentservice.NewEnvironment(store, func() model.EnvironmentID { return "env-coding" })
+	ctx := context.Background()
+
+	if _, err := service.Create(ctx, "coding"); err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	if _, err := service.Use(ctx, "session-one", "coding"); err != nil {
+		t.Fatalf("Use returned error: %v", err)
+	}
+
+	renamed, err := service.Rename(ctx, "coding", "backend")
+	if err != nil {
+		t.Fatalf("Rename returned error: %v", err)
+	}
+	if renamed.ID != "env-coding" || renamed.Name != "backend" || renamed.Revision != 2 {
+		t.Fatalf("renamed Environment = %#v", renamed)
+	}
+	current, err := service.Current(ctx, "session-one")
+	if err != nil || current.Environment == nil || current.Environment.Name != "backend" {
+		t.Fatalf("Current after rename = %#v, err=%v", current, err)
+	}
+
+	deleted, err := service.Delete(ctx, "backend")
+	if err != nil || deleted.ID != "env-coding" {
+		t.Fatalf("Delete = %#v, err=%v", deleted, err)
+	}
+	current, err = service.Current(ctx, "session-one")
+	if err != nil || current.Environment == nil || current.Environment.ID != constants.BaseEnvironmentID {
+		t.Fatalf("Current after delete = %#v, err=%v", current, err)
+	}
+
+	_, err = service.Rename(ctx, "base", "renamed-base")
+	requireStatus(t, err, commonresponse.StatusCodeConflict)
+	_, err = service.Delete(ctx, "base")
+	requireStatus(t, err, commonresponse.StatusCodeConflict)
+
+	if _, err := service.Create(ctx, "temporary"); err != nil {
+		t.Fatalf("Create temporary returned error: %v", err)
+	}
+	if _, err := service.Use(ctx, "session-two", "temporary"); err != nil {
+		t.Fatalf("Use temporary returned error: %v", err)
+	}
+	if _, err := service.Delete(ctx, "temporary"); err != nil {
+		t.Fatalf("Delete temporary returned error: %v", err)
+	}
+	base, err := service.Quit(ctx, "session-two")
+	if err != nil || base.Environment == nil || base.Environment.ID != constants.BaseEnvironmentID {
+		t.Fatalf("Quit after delete = %#v, err=%v", base, err)
+	}
+	inactive, err := service.Quit(ctx, "session-two")
+	if err != nil || inactive.Environment != nil {
+		t.Fatalf("second Quit after delete = %#v, err=%v", inactive, err)
+	}
+}
+
 func TestEnvironmentServiceAddSkill(t *testing.T) {
 	auto := model.EnvironmentSkillPolicy{Kind: constants.SkillPolicyAuto}
 
@@ -180,6 +238,49 @@ func TestEnvironmentServiceAddSkill(t *testing.T) {
 			}
 		}
 	})
+}
+
+func TestEnvironmentServiceRemoveSkill(t *testing.T) {
+	ctx := context.Background()
+	auto := model.EnvironmentSkillPolicy{Kind: constants.SkillPolicyAuto}
+	stateDir := t.TempDir()
+	store := newTestEnvironmentDAL(stateDir)
+	service := environmentservice.NewEnvironment(store, func() model.EnvironmentID { return "env-coding" })
+	if _, err := service.Create(ctx, "coding"); err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	if _, _, err := service.AddSkill(ctx, model.Skill{Key: "code-review"}, []string{"coding", "base"}, auto); err != nil {
+		t.Fatalf("AddSkill returned error: %v", err)
+	}
+
+	updated, err := service.RemoveSkill(ctx, model.Skill{Key: "code-review"}, []string{"coding", "base"})
+	if err != nil {
+		t.Fatalf("RemoveSkill returned error: %v", err)
+	}
+	for _, environment := range updated {
+		if environment.Revision != 3 || len(environment.Skills) != 1 || environment.Skills[0] != defaultGuideBinding() {
+			t.Errorf("updated Environment = %#v", environment)
+		}
+	}
+
+	before := mustReadFile(t, filepath.Join(stateDir, constants.EnvironmentStoreFileName))
+	_, err = service.RemoveSkill(ctx, model.Skill{Key: "missing"}, []string{"coding", "base"})
+	requireStatus(t, err, commonresponse.StatusCodeNotFound)
+	if after := mustReadFile(t, filepath.Join(stateDir, constants.EnvironmentStoreFileName)); !bytes.Equal(after, before) {
+		t.Fatal("failed RemoveSkill changed persisted Environments")
+	}
+	_, err = service.RemoveSkill(ctx, model.Skill{Key: constants.DefaultGuideSkillKey}, []string{"base"})
+	requireStatus(t, err, commonresponse.StatusCodeConflict)
+
+	if _, _, err := service.AddSkill(ctx, model.Skill{Key: "coding-only"}, []string{"coding"}, auto); err != nil {
+		t.Fatalf("AddSkill coding-only returned error: %v", err)
+	}
+	before = mustReadFile(t, filepath.Join(stateDir, constants.EnvironmentStoreFileName))
+	_, err = service.RemoveSkill(ctx, model.Skill{Key: "coding-only"}, []string{"coding", "base"})
+	requireStatus(t, err, commonresponse.StatusCodeNotFound)
+	if after := mustReadFile(t, filepath.Join(stateDir, constants.EnvironmentStoreFileName)); !bytes.Equal(after, before) {
+		t.Fatal("partially failed RemoveSkill changed persisted Environments")
+	}
 }
 
 func TestEnvironmentServiceResolve(t *testing.T) {
@@ -409,6 +510,35 @@ func TestEnvironmentDAL(t *testing.T) {
 		if persisted.SchemaVersion != 1 || !reflect.DeepEqual(gotNames, wantNames) {
 			t.Fatalf("persisted store = %#v, names=%v", persisted, gotNames)
 		}
+	})
+
+	t.Run("renames and deletes non-base Environments", func(t *testing.T) {
+		stateDir := t.TempDir()
+		store := newTestEnvironmentDAL(stateDir)
+		if _, err := store.Create(context.Background(), testEnvironment("env-alpha", "alpha", 1)); err != nil {
+			t.Fatalf("seed Create returned error: %v", err)
+		}
+
+		renamed, err := store.Rename(context.Background(), "env-alpha", "beta")
+		if err != nil || renamed.ID != "env-alpha" || renamed.Name != "beta" || renamed.Revision != 2 {
+			t.Fatalf("Rename = %#v, err=%v", renamed, err)
+		}
+		unchanged, err := store.Rename(context.Background(), "env-alpha", "beta")
+		if err != nil || unchanged.Revision != 2 {
+			t.Fatalf("idempotent Rename = %#v, err=%v", unchanged, err)
+		}
+		deleted, err := store.Delete(context.Background(), "beta")
+		if err != nil || deleted.ID != "env-alpha" {
+			t.Fatalf("Delete = %#v, err=%v", deleted, err)
+		}
+		if _, err := store.GetByIDOrName(context.Background(), "env-alpha"); err == nil {
+			t.Fatal("deleted Environment remains readable")
+		}
+
+		_, err = store.Rename(context.Background(), constants.BaseEnvironmentID, "renamed")
+		requireStatus(t, err, commonresponse.StatusCodeConflict)
+		_, err = store.Delete(context.Background(), constants.BaseEnvironmentID)
+		requireStatus(t, err, commonresponse.StatusCodeConflict)
 	})
 
 	t.Run("seeds base into an empty persisted array", func(t *testing.T) {
@@ -678,6 +808,45 @@ func TestJSONCommands(t *testing.T) {
 		t.Fatalf("Session Skill list = %#v", useData.Session)
 	}
 
+	namedSkills := runJSONCommand(t, service, "skill", "list", "coding", "--output", "json")
+	var environmentData struct {
+		Environment model.Environment `json:"environment"`
+	}
+	decodeData(t, namedSkills, &environmentData)
+	if environmentData.Environment.Name != "coding" || len(environmentData.Environment.Skills) != 2 {
+		t.Fatalf("named Environment Skill list = %#v", environmentData.Environment)
+	}
+	inspectionStatus := runJSONCommand(t, service, "env", "status", "--session-id", "inspection-only", "--output", "json")
+	var inspectionData struct {
+		Session model.Session `json:"session"`
+	}
+	decodeData(t, inspectionStatus, &inspectionData)
+	if inspectionData.Session.Environment != nil {
+		t.Fatalf("named Skill list activated Session: %#v", inspectionData.Session)
+	}
+
+	removed := runJSONCommand(t, service, "skill", "remove", "code-review", "coding", "base", "--output", "json")
+	if removed.Message != "skill removed from environment" {
+		t.Fatalf("remove message = %q", removed.Message)
+	}
+
+	renamed := runJSONCommand(t, service, "env", "rename", "coding", "backend", "--output", "json")
+	decodeData(t, renamed, &environmentData)
+	if environmentData.Environment.ID != "env_coding" || environmentData.Environment.Name != "backend" || environmentData.Environment.Revision != 4 {
+		t.Fatalf("renamed Environment = %#v", environmentData.Environment)
+	}
+
+	deleted := runJSONCommand(t, service, "env", "delete", "backend", "--output", "json")
+	decodeData(t, deleted, &environmentData)
+	if environmentData.Environment.ID != "env_coding" || environmentData.Environment.Name != "backend" {
+		t.Fatalf("deleted Environment = %#v", environmentData.Environment)
+	}
+	status = runJSONCommand(t, service, "env", "status", "--session-id", "session-one", "--output", "json")
+	decodeData(t, status, &useData)
+	if useData.Session.Environment == nil || useData.Session.Environment.ID != constants.BaseEnvironmentID {
+		t.Fatalf("Session after Environment deletion = %#v", useData.Session)
+	}
+
 	listed := runJSONCommand(t, service, "env", "list", "--output", "json")
 	var listData struct {
 		Environments []struct {
@@ -686,7 +855,7 @@ func TestJSONCommands(t *testing.T) {
 		} `json:"environments"`
 	}
 	decodeData(t, listed, &listData)
-	if got := []string{listData.Environments[0].Name, listData.Environments[1].Name}; !reflect.DeepEqual(got, []string{"base", "coding"}) {
+	if got := []string{listData.Environments[0].Name}; !reflect.DeepEqual(got, []string{"base"}) {
 		t.Fatalf("listed Environment names = %v", got)
 	}
 }
@@ -703,6 +872,10 @@ func TestJSONCommandFailures(t *testing.T) {
 		{name: "missing Environment argument", args: []string{"skill", "add", "search", "--output", "json"}, wantCode: 400, wantPrompt: `Run "hev skill add --help" to inspect this command's required arguments.`},
 		{name: "rejects removed env flag", args: []string{"skill", "add", "search", "--env", "base", "--output", "json"}, wantCode: 400, wantPrompt: `Run "hev skill add --help" to inspect the supported flags.`},
 		{name: "unsupported policy", args: []string{"skill", "add", "search", "base", "--policy", "always", "--output", "json"}, wantCode: 400, wantPrompt: "Retry with --policy auto or --policy off."},
+		{name: "named list conflicts with session", args: []string{"skill", "list", "base", "--session-id", "session-one", "--output", "json"}, wantCode: 400, wantPrompt: "Use either an Environment ID or name, or --session-id for the current Environment."},
+		{name: "cannot rename base", args: []string{"env", "rename", "base", "renamed", "--output", "json"}, wantCode: 409, wantPrompt: "Choose a non-base Environment to rename."},
+		{name: "cannot delete base", args: []string{"env", "delete", "base", "--output", "json"}, wantCode: 409, wantPrompt: "Choose a non-base Environment to delete."},
+		{name: "cannot remove base guide", args: []string{"skill", "remove", "hev-guide", "base", "--output", "json"}, wantCode: 409, wantPrompt: "Keep hev-guide enabled in base, or remove it only from a non-base Environment."},
 		{name: "unknown command", args: []string{"unknown", "--output", "json"}, wantCode: 400, wantPrompt: `Run "hev --help" to inspect this command's required arguments.`},
 	}
 
@@ -776,7 +949,11 @@ func TestCommandHelp(t *testing.T) {
 		{args: []string{"--help"}, want: []string{"Manage isolated Skill environments", "hev env use coding --session-id <session-id>"}},
 		{args: []string{"env", "use", "--help"}, want: []string{"Select exactly one existing Environment", "hev env use coding --session-id session-123"}},
 		{args: []string{"env", "quit", "--help"}, want: []string{"non-base Environment, quit selects base", "base, quit deactivates"}},
+		{args: []string{"env", "rename", "--help"}, want: []string{"preserving its stable ID", "lowercase kebab-case"}},
+		{args: []string{"env", "delete", "--help"}, want: []string{"bound to the deleted Environment", "base Environment cannot be deleted"}},
 		{args: []string{"skill", "add", "--help"}, want: []string{"does not install the Skill", "--policy off"}},
+		{args: []string{"skill", "remove", "--help"}, want: []string{"atomically", "hev-guide from base"}},
+		{args: []string{"skill", "list", "--help"}, want: []string{"without changing any Session", "Environment ID or name"}},
 	} {
 		var stdout bytes.Buffer
 		var stderr bytes.Buffer
@@ -803,11 +980,15 @@ func TestCLIContract(t *testing.T) {
 	}{
 		{args: []string{"env", "create", "coding", "--output", "json"}, wantSuccess: true},
 		{args: []string{"skill", "add", "code-review", "coding", "--output", "json"}, wantSuccess: true},
+		{args: []string{"skill", "list", "coding", "--output", "json"}, wantSuccess: true},
+		{args: []string{"env", "rename", "coding", "backend", "--output", "json"}, wantSuccess: true},
+		{args: []string{"skill", "remove", "code-review", "backend", "--output", "json"}, wantSuccess: true},
 		{args: []string{"env", "list", "--output", "json"}, wantSuccess: true},
-		{args: []string{"env", "use", "coding", "--session-id", "contract-session", "--output", "json"}, wantSuccess: true},
+		{args: []string{"env", "use", "backend", "--session-id", "contract-session", "--output", "json"}, wantSuccess: true},
 		{args: []string{"env", "status", "--session-id", "contract-session", "--output", "json"}, wantSuccess: true},
 		{args: []string{"skill", "list", "--session-id", "contract-session", "--output", "json"}, wantSuccess: true},
 		{args: []string{"env", "quit", "--session-id", "contract-session", "--output", "json"}, wantSuccess: true},
+		{args: []string{"env", "delete", "backend", "--output", "json"}, wantSuccess: true},
 		{args: []string{"env", "use", "--session-id", "contract-session", "--output", "json"}},
 		{args: []string{"env", "use", "coding", "base", "--session-id", "contract-session", "--output", "json"}},
 		{args: []string{"env", "use", "missing", "--session-id", "contract-session", "--output", "json"}},
@@ -861,6 +1042,10 @@ type updateManyCall struct {
 type stubEnvironmentStore struct {
 	createCalls     []model.Environment
 	createErr       error
+	renameResult    model.Environment
+	renameErr       error
+	deleteResult    model.Environment
+	deleteErr       error
 	defaultCalls    int
 	defaultResult   model.Environment
 	defaultErr      error
@@ -885,6 +1070,21 @@ func (s *stubEnvironmentStore) Create(_ context.Context, value model.Environment
 		return model.Environment{}, s.createErr
 	}
 	return value, nil
+}
+
+func (s *stubEnvironmentStore) Rename(
+	_ context.Context,
+	_ model.EnvironmentID,
+	_ string,
+) (model.Environment, error) {
+	return cloneEnvironment(s.renameResult), s.renameErr
+}
+
+func (s *stubEnvironmentStore) Delete(
+	_ context.Context,
+	_ model.EnvironmentID,
+) (model.Environment, error) {
+	return cloneEnvironment(s.deleteResult), s.deleteErr
 }
 
 func (s *stubEnvironmentStore) Default(_ context.Context) (model.Environment, error) {
@@ -947,13 +1147,13 @@ func (s *stubEnvironmentStore) SetSessionEnvironment(
 	return nil
 }
 
-func (s *stubEnvironmentStore) UpdateSessionEnvironment(
+func (s *stubEnvironmentStore) LeaveSessionEnvironment(
 	_ context.Context,
 	_ string,
-	update func(model.EnvironmentID, bool) (model.EnvironmentID, bool),
-) (bool, error) {
-	_, active := update("", false)
-	return active, nil
+	_ model.EnvironmentID,
+	_ model.EnvironmentID,
+) (model.EnvironmentID, bool, error) {
+	return "", false, nil
 }
 
 type persistedStoreFile struct {

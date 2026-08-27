@@ -115,6 +115,94 @@ func (d *EnvironmentDAL) Create(ctx context.Context, environment model.Environme
 	return cloneEnvironment(created), nil
 }
 
+// Rename atomically changes one Environment name and increments its revision.
+func (d *EnvironmentDAL) Rename(
+	ctx context.Context,
+	environmentID model.EnvironmentID,
+	newName string,
+) (model.Environment, error) {
+	var renamed model.Environment
+	err := d.withLockedFile(ctx, true, func(file *storeFile) error {
+		index := environmentIndexByIDOrName(file.Environments, string(environmentID))
+		if index < 0 {
+			return commonresponse.NewError(
+				commonresponse.StatusCodeNotFound,
+				fmt.Sprintf("environment not found: %s", environmentID),
+				"List the available Environments and retry with an existing Environment ID or name.",
+			)
+		}
+		if file.Environments[index].ID == constants.BaseEnvironmentID {
+			return commonresponse.NewError(
+				commonresponse.StatusCodeConflict,
+				"base environment cannot be renamed",
+				"Choose a non-base Environment to rename.",
+			)
+		}
+		if file.Environments[index].Name == newName {
+			renamed = cloneEnvironment(file.Environments[index])
+			return nil
+		}
+		for candidateIndex, candidate := range file.Environments {
+			if candidateIndex == index {
+				continue
+			}
+			if candidate.Name == newName || string(candidate.ID) == newName {
+				return commonresponse.NewError(
+					commonresponse.StatusCodeConflict,
+					fmt.Sprintf("environment name already exists: %s", newName),
+					"Choose a different Environment name.",
+				)
+			}
+		}
+
+		next := cloneEnvironment(file.Environments[index])
+		next.Name = newName
+		next.Revision++
+		if err := validateEnvironment(next); err != nil {
+			return err
+		}
+		file.Environments[index] = next
+		renamed = cloneEnvironment(next)
+		return nil
+	})
+	if err != nil {
+		return model.Environment{}, fmt.Errorf("rename environment: %w", err)
+	}
+	return renamed, nil
+}
+
+// Delete atomically removes one Environment record.
+func (d *EnvironmentDAL) Delete(
+	ctx context.Context,
+	environmentID model.EnvironmentID,
+) (model.Environment, error) {
+	var deleted model.Environment
+	err := d.withLockedFile(ctx, true, func(file *storeFile) error {
+		index := environmentIndexByIDOrName(file.Environments, string(environmentID))
+		if index < 0 {
+			return commonresponse.NewError(
+				commonresponse.StatusCodeNotFound,
+				fmt.Sprintf("environment not found: %s", environmentID),
+				"List the available Environments and retry with an existing Environment ID or name.",
+			)
+		}
+		if file.Environments[index].ID == constants.BaseEnvironmentID {
+			return commonresponse.NewError(
+				commonresponse.StatusCodeConflict,
+				"base environment cannot be deleted",
+				"Choose a non-base Environment to delete.",
+			)
+		}
+		deleted = cloneEnvironment(file.Environments[index])
+		file.Environments = append(file.Environments[:index], file.Environments[index+1:]...)
+		return nil
+	})
+	if err != nil {
+		return model.Environment{}, fmt.Errorf("delete environment: %w", err)
+	}
+	return deleted, nil
+}
+
 // Default returns the current base Environment.
 func (d *EnvironmentDAL) Default(ctx context.Context) (model.Environment, error) {
 	return d.GetByIDOrName(ctx, constants.BaseEnvironmentName)
@@ -272,51 +360,50 @@ func (d *EnvironmentDAL) SetSessionEnvironment(
 	return nil
 }
 
-// UpdateSessionEnvironment atomically replaces or removes one Session binding.
-func (d *EnvironmentDAL) UpdateSessionEnvironment(
+// LeaveSessionEnvironment moves one Session toward base without overwriting a concurrent selection.
+func (d *EnvironmentDAL) LeaveSessionEnvironment(
 	ctx context.Context,
 	sessionID string,
-	update func(model.EnvironmentID, bool) (model.EnvironmentID, bool),
-) (bool, error) {
+	expectedID model.EnvironmentID,
+	baseID model.EnvironmentID,
+) (model.EnvironmentID, bool, error) {
 	if sessionID == "" {
-		return false, errors.New("update session binding: session id must not be empty")
+		return "", false, errors.New("leave session environment: session id must not be empty")
 	}
+	var resolvedID model.EnvironmentID
 	active := false
 	err := d.withLockedSessionFile(ctx, true, func(file *sessionStoreFile) error {
-		var current model.EnvironmentID
 		index := -1
 		for bindingIndex, binding := range file.Bindings {
 			if binding.SessionID == sessionID {
-				current = binding.EnvironmentID
 				index = bindingIndex
 				break
 			}
 		}
-
-		next, keep := update(current, index >= 0)
-		if !keep {
-			if index >= 0 {
-				file.Bindings = append(file.Bindings[:index], file.Bindings[index+1:]...)
-			}
+		if index < 0 {
 			return nil
 		}
-		if strings.TrimSpace(string(next)) == "" {
-			return errors.New("updated environment id must not be empty")
+
+		currentID := file.Bindings[index].EnvironmentID
+		if expectedID != "" && currentID != expectedID {
+			resolvedID = currentID
+			active = true
+			return nil
 		}
-		if index >= 0 {
-			file.Bindings[index].EnvironmentID = next
-		} else {
-			file.Bindings = append(file.Bindings, sessionBinding{
-				SessionID: sessionID, EnvironmentID: next,
-			})
+		if currentID == baseID {
+			file.Bindings = append(file.Bindings[:index], file.Bindings[index+1:]...)
+			return nil
 		}
+
+		file.Bindings[index].EnvironmentID = baseID
+		resolvedID = baseID
 		active = true
 		return nil
 	})
 	if err != nil {
-		return false, fmt.Errorf("update session binding: %w", err)
+		return "", false, fmt.Errorf("leave session environment: %w", err)
 	}
-	return active, nil
+	return resolvedID, active, nil
 }
 
 func (d *EnvironmentDAL) withLockedFile(

@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 2,
+  "code": 200,
+  "message": "environment renamed",
+  "prompt": "",
+  "data": {
+    "environment": {
+      "source": "standalone",
+      "id": "env_coding",
+      "name": "backend",
+      "revision": 2,
+      "skills": [
+        {
+          "skillKey": "hev-guide",
+          "policy": {
+            "kind": "auto"
+          }
+        }
+      ]
+    }
+  }
+}

@@ -32,6 +32,56 @@ Creating an Environment does not select it for any Session.`,
 	}
 }
 
+// NewRenameEnvironmentCommand builds `hev env rename`.
+func NewRenameEnvironmentCommand(environmentService *service.EnvironmentService) *cobra.Command {
+	return &cobra.Command{
+		Use:   "rename <env-id-or-name> <new-name>",
+		Short: "Rename an Environment",
+		Long: `Rename one non-base Environment while preserving its stable ID and Session bindings.
+
+The new name must be lowercase kebab-case. The Environment revision increments
+when its name changes.`,
+		Example: `  hev env rename coding-tools backend-tools
+  hev env rename env_123 backend-tools`,
+		Args: common.ExactArgs(2),
+		RunE: func(command *cobra.Command, args []string) error {
+			if err := common.ValidateOutput(command); err != nil {
+				return err
+			}
+			renamed, err := environmentService.Rename(command.Context(), args[0], args[1])
+			if err != nil {
+				return err
+			}
+			return packer.WriteRenamedEnvironment(command.OutOrStdout(), common.IsJSONOutput(command), renamed)
+		},
+	}
+}
+
+// NewDeleteEnvironmentCommand builds `hev env delete`.
+func NewDeleteEnvironmentCommand(environmentService *service.EnvironmentService) *cobra.Command {
+	return &cobra.Command{
+		Use:   "delete <env-id-or-name>",
+		Short: "Delete an Environment",
+		Long: `Delete one non-base Environment.
+
+A Session still bound to the deleted Environment resolves to base on its next
+hev operation. The base Environment cannot be deleted.`,
+		Example: `  hev env delete temporary-tools
+  hev env delete env_123`,
+		Args: common.ExactArgs(1),
+		RunE: func(command *cobra.Command, args []string) error {
+			if err := common.ValidateOutput(command); err != nil {
+				return err
+			}
+			deleted, err := environmentService.Delete(command.Context(), args[0])
+			if err != nil {
+				return err
+			}
+			return packer.WriteDeletedEnvironment(command.OutOrStdout(), common.IsJSONOutput(command), deleted)
+		},
+	}
+}
+
 // NewListEnvironmentCommand builds `hev env list`.
 func NewListEnvironmentCommand(environmentService *service.EnvironmentService) *cobra.Command {
 	return &cobra.Command{

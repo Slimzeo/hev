@@ -36,26 +36,29 @@ The human command surface supports:
 
 ```text
 /hev env create <name>
+/hev env rename <id-or-name> <new-name>
+/hev env delete <id-or-name>
 /hev env list
 /hev env use <id-or-name>
 /hev env quit
 /hev env status
 /hev skill add <skill-key> <env-name> [env-name...] [--policy auto|off]
-/hev skill list
+/hev skill remove <skill-key> <env-name> [env-name...]
+/hev skill list [id-or-name]
 /hev skill list --global
 ```
 
 Selection is persisted by the Go Core under `$DSH_HOME/.hev/session-bindings.json`, keyed by the DSH Session ID. A Session with no explicit `use` is not managed by hev: `/hev env status` reports `hev not activated`, and the Skill Registry keeps the native unfiltered view. `/hev env use` selects one Environment. `/hev env quit` moves a non-`base` selection to `base`; quitting `base` removes the Session selection and deactivates hev. The persisted `base` Environment and every newly created Environment enable the bundled `hev-guide` onboarding Skill.
 
-The Agent can perform the same operations directly through `hev_env_status`, `hev_env_use`, `hev_env_quit`, `hev_env_create`, `hev_env_list`, `hev_skill_add`, and `hev_skill_list`. Session-scoped Tools take the exact calling Agent from DSH execution context and do not expose a model-controlled `sessionId` argument.
+The Agent can perform the same operations directly through `hev_env_status`, `hev_env_use`, `hev_env_quit`, `hev_env_create`, `hev_env_rename`, `hev_env_delete`, `hev_env_list`, `hev_skill_add`, `hev_skill_remove`, and `hev_skill_list`. Session-scoped Tools take the exact calling Agent from DSH execution context and do not expose a model-controlled `sessionId` argument.
 
 CLI failures keep diagnostic `message` text separate from recovery `prompt` text. `/hev` and the model-facing Tools log the diagnostic while returning the recovery prompt to the caller, so an Agent can correct its next invocation without receiving storage or process details. `/hev help`, `/hev help env`, `/hev help skill`, and command-level `--help` forms describe the human command surface.
 
 The DSH runtime fixes the Core source to `dsh`; neither the Agent nor plugin configuration chooses a storage path. The Go entry point resolves that source through `$DSH_HOME`, defaulting to `~/.dsh/.hev/`.
 
-`/hev env list` reports all persisted Environments. `/hev skill list` reports every Skill configured in the selected Environment, including `off` entries, while `/hev skill list --global` reports the current DSH view before Environment filtering. The Go Store automatically persists `base`, revision `1`, with `hev-guide` when its file is missing or contains an empty `environments` array. On read it migrates the earlier `env_base` ID to `base` and adds `hev-guide` once to existing base records that predate the guide; existing non-base Environments remain unchanged. The Core stores one canonical Environment ID per Session, then resolves the latest Environment on each filtered Skill read. `env use` never composes Environments; multiple positional Environment names on `skill add` mutate several configurations without selecting them.
+`/hev env list` reports all persisted Environments. `/hev skill list` reports every Skill configured in the selected Environment, `/hev skill list <env>` inspects one Environment without selecting it, and `/hev skill list --global` reports the current DSH view before Environment filtering. `env rename` preserves the Environment ID and Session bindings. `env delete` rejects `base`; a Session still bound to a deleted Environment resolves to `base` on its next hev operation. The Go Store automatically persists `base`, revision `1`, with `hev-guide` when its file is missing or contains an empty `environments` array. On read it migrates the earlier `env_base` ID to `base` and adds `hev-guide` once to existing base records that predate the guide; existing non-base Environments remain unchanged. The Core stores one canonical Environment ID per Session, then resolves the latest Environment on each filtered Skill read. `env use` never composes Environments; multiple positional Environment names on `skill add` and `skill remove` mutate several configurations without selecting them.
 
-The Skill Registry entry keeps DSH provider discovery, winner selection, validation, and Skill loading unchanged, while contributing `hev-guide` as a bundled provider. With the native `skill-filesystem` row mounted, the candidate catalog therefore includes `<project>/.dsh/skills`, `<project>/.agents/skills`, `customSkillDirs`, `$DSH_HOME/skills`, `$DSH_AGENTS_HOME/skills`, and configured or provider-contributed bundled Skills. An active exact live Agent sees only winners from that catalog whose key has `policy.kind === 'auto'` in its current Environment; `off` and unlisted keys are unavailable through `list()`, `snapshot()`, and `get()`. Inactive Sessions and reads without an exact live Agent scope keep the full native view. A configured hev key that has no native winner remains hidden but does not make `use` fail.
+The Skill Registry entry keeps DSH provider discovery, winner selection, validation, and Skill loading unchanged, while contributing `hev-guide` as a bundled provider. With the native `skill-filesystem` row mounted, the candidate catalog therefore includes `<project>/.dsh/skills`, `<project>/.agents/skills`, `customSkillDirs`, `$DSH_HOME/skills`, `$DSH_AGENTS_HOME/skills`, and configured or provider-contributed bundled Skills. An active exact live Agent sees only winners from that catalog whose key has `policy.kind === 'auto'` in its current Environment through `list()` and `snapshot()`; `off` and unlisted keys stay out of automatic model discovery. Direct `get()` remains native so DSH's user-explicit `/skill-name` path can load a globally installed user-invocable Skill without hev inventing cross-Environment composition. The model-facing `skill` Tool still checks the filtered list before loading. Inactive Sessions and reads without an exact live Agent scope keep the full native view. A configured hev key that has no native winner remains hidden but does not make `use` fail.
 
 ## Development
 
@@ -66,7 +69,7 @@ pnpm test
 pnpm build
 ```
 
-`pnpm build` compiles both Cordis subpaths and the supported hev binaries into the package. The integration test builds a temporary native hev executable, boots the composed rows through the DSH Loader, and verifies inactive passthrough, `create -> add -> use -> filtered native SkillRegistry`, two-level `quit`, and exact-Session isolation.
+`pnpm build` compiles the Cordis subpaths and supported hev binaries into the package. The integration test builds a temporary native hev executable, boots the composed rows through the DSH Loader, and verifies inactive passthrough, Environment and Skill mutations, filtered native Skill discovery, two-level `quit`, and exact-Session isolation.
 
 ## Local DSH integration
 
@@ -109,4 +112,4 @@ In one live Session, create an Environment, add an `auto` key and an `off` key t
 /hev env use review
 ```
 
-The auto Skill is listed and loadable; the off Skill is not. A missing native Skill key does not block `use`, but it cannot appear because there is no native winner. Open another Session to verify hev is inactive there and native Skills remain unfiltered; selecting `review` there does not change the first Session.
+The auto Skill appears in the model catalog; the off Skill does not. A user may still explicitly invoke a globally installed user-invocable Skill through DSH's native `/skill-name` path. A missing native Skill key does not block `use`, but it cannot appear because there is no native winner. Open another Session to verify hev is inactive there and native Skills remain unfiltered; selecting `review` there does not change the first Session.

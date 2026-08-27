@@ -9,7 +9,7 @@ type Skill struct {
 	Key SkillKey `json:"skillKey"`
 }
 
-// SkillPolicyKind selects how a Skill is exposed inside one Environment.
+// SkillPolicyKind selects whether a Skill enters automatic model discovery in one Environment.
 type SkillPolicyKind string
 
 // EnvironmentSkillPolicy is the Environment-specific policy for one Skill.

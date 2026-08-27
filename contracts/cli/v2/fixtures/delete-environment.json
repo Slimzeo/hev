@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 2,
+  "code": 200,
+  "message": "environment deleted",
+  "prompt": "",
+  "data": {
+    "environment": {
+      "source": "standalone",
+      "id": "env_scratch",
+      "name": "scratch",
+      "revision": 1,
+      "skills": [
+        {
+          "skillKey": "hev-guide",
+          "policy": {
+            "kind": "auto"
+          }
+        }
+      ]
+    }
+  }
+}

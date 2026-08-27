@@ -48,7 +48,7 @@ const hevGuideProvider: SkillProvider = {
   },
 }
 
-/** Native DSH Skill Registry with hev Environment visibility applied at reads. */
+/** Native DSH Skill Registry with hev Environment filtering applied to catalog reads. */
 export class HevSkillRegistry extends SkillRegistry {
   static inject = ['agents', 'environment']
 
@@ -83,21 +83,10 @@ export class HevSkillRegistry extends SkillRegistry {
     return { ...catalog, skills: catalog.skills.filter(skill => allowed.has(skill.name)) }
   }
 
-  /**
-   * Load a native winner only when the calling Agent's current Environment allows it.
-   * @param name - native Skill name.
-   * @param options - native lookup options; an exact live Agent may be supplied as the scope.
-   * @returns the native definition when visible, otherwise `undefined`.
-   */
-  override async get(
-    name: string,
-    options: SkillViewOptions = {},
-  ): Promise<SkillDefinition | undefined> {
-    const allowed = await this.allowedSkillNames(options)
-    if (allowed !== undefined && !allowed.has(name)) return undefined
-    return await super.get(name, options)
-  }
+  // Keep the native get(): the model-facing skill Tool checks this filtered
+  // catalog first, while DSH's explicit /skill-name path intentionally does not.
 
+  /** Resolve the active Environment's model-discoverable Skill names. */
   private async allowedSkillNames(options: SkillViewOptions): Promise<ReadonlySet<string> | undefined> {
     const agent = options.scope === undefined
       ? undefined

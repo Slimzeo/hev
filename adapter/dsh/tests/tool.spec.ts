@@ -56,18 +56,26 @@ async function setup() {
   const use = vi.fn(async () => environment())
   const quit = vi.fn(async () => environment('base'))
   const create = vi.fn(async () => ({ message: 'environment created', environment: environment('review') }))
+  const rename = vi.fn(async () => ({ message: 'environment renamed', environment: environment('backend') }))
+  const deleteEnvironment = vi.fn(async () => ({ message: 'environment deleted', environment: environment('scratch') }))
   const list = vi.fn(async () => [{ source: 'dsh' as const, id: EnvironmentId('base'), name: 'base', revision: 1 }])
   const addSkill = vi.fn(async () => ({
     message: 'skill added to environment',
     environmentSkill: { skillKey: 'code-review', policy: { kind: 'auto' as const } },
     environments: [{ source: 'dsh' as const, id: EnvironmentId('env-coding'), name: 'coding', revision: 2 }],
   }))
+  const removeSkill = vi.fn(async () => ({
+    message: 'skill removed from environment',
+    skillKey: 'code-review',
+    environments: [{ source: 'dsh' as const, id: EnvironmentId('env-coding'), name: 'coding', revision: 3 }],
+  }))
+  const listEnvironmentSkills = vi.fn(async () => environment('review'))
   const listGlobalSkills = vi.fn(async () => [{ name: 'code-review' }])
   ctx.provide('environment', {
-    current, use, quit, create, list, addSkill, listGlobalSkills,
+    current, use, quit, create, rename, deleteEnvironment, list, addSkill, removeSkill, listEnvironmentSkills, listGlobalSkills,
   } as unknown as EnvironmentController)
   await ctx.plugin(HevTool)
-  return { ctx, current, use, quit, create, list, addSkill, listGlobalSkills }
+  return { ctx, current, use, quit, create, rename, deleteEnvironment, list, addSkill, removeSkill, listEnvironmentSkills, listGlobalSkills }
 }
 
 function callTool(ctx: Context, name: string, args: unknown, caller?: Agent) {
@@ -95,29 +103,46 @@ describe('@slimzeo/hev-dsh-plugin/hev-tool', () => {
   })
 
   it('exposes Environment and Skill management without a sessionId argument', async () => {
-    const { ctx, create, list, addSkill, listGlobalSkills } = await setup()
+    const { ctx, create, rename, deleteEnvironment, list, addSkill, removeSkill, listEnvironmentSkills, listGlobalSkills } = await setup()
     const caller = agent('manager-session')
 
     expect(text(await callTool(ctx, 'hev_env_create', { name: 'review' }, caller))).toContain('review')
+    expect(text(await callTool(ctx, 'hev_env_rename', { environment: 'review', name: 'backend' }, caller))).toContain('backend')
+    expect(text(await callTool(ctx, 'hev_env_delete', { environment: 'scratch' }, caller))).toBe('deleted scratch (env-scratch)')
     expect(text(await callTool(ctx, 'hev_env_list', {}, caller))).toBe('environments:\n- base (base rev 1)')
     expect(text(await callTool(ctx, 'hev_skill_add', {
       skill: 'code-review', environments: ['coding'], policy: 'auto',
     }, caller))).toBe('added code-review to coding')
+    expect(text(await callTool(ctx, 'hev_skill_remove', {
+      skill: 'code-review', environments: ['coding'],
+    }, caller))).toBe('removed code-review from coding')
+    expect(text(await callTool(ctx, 'hev_skill_list', { environment: 'review' }, caller))).toContain('review:')
     expect(text(await callTool(ctx, 'hev_skill_list', { global: true }, caller))).toBe('global:\n- code-review')
 
+    expect(text(await callTool(ctx, 'hev_skill_list', {
+      global: true, environment: 'review',
+    }, caller))).toBe('Error: Set either global=true or environment, not both.')
+
     expect(create).toHaveBeenCalledWith('review', signal)
+    expect(rename).toHaveBeenCalledWith('review', 'backend', signal)
+    expect(deleteEnvironment).toHaveBeenCalledWith('scratch', signal)
     expect(list).toHaveBeenCalledWith(signal)
     expect(addSkill).toHaveBeenCalledWith('code-review', ['coding'], 'auto', signal)
+    expect(removeSkill).toHaveBeenCalledWith('code-review', ['coding'], signal)
+    expect(listEnvironmentSkills).toHaveBeenCalledWith('review', signal)
     expect(listGlobalSkills).toHaveBeenCalledWith(caller, signal)
     const schemas = ctx.tools.schemas().filter(schema => schema.name.startsWith('hev_'))
     expect(schemas.map(schema => schema.name).sort()).toEqual([
       'hev_env_create',
+      'hev_env_delete',
       'hev_env_list',
       'hev_env_quit',
+      'hev_env_rename',
       'hev_env_status',
       'hev_env_use',
       'hev_skill_add',
       'hev_skill_list',
+      'hev_skill_remove',
     ])
     for (const schema of schemas) {
       const properties = (schema.parameters as { properties?: Record<string, unknown> }).properties ?? {}

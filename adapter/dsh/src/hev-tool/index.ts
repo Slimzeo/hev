@@ -5,7 +5,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { defineTool } from '@deepseek-ai/dsh-tools'
-import { HevCliError } from '../hev-runtime/index.ts'
+import { HevCliError, StatusCode } from '../hev-runtime/index.ts'
 import type { Environment, EnvironmentSummary, SkillPolicyKind } from '../hev-runtime/index.ts'
 import type {} from '../hev-runtime/index.ts'
 
@@ -69,6 +69,34 @@ export function apply(ctx: Context): void {
   }))
 
   ctx.tools.register(defineTool({
+    name: 'hev_env_rename',
+    description: 'Rename one non-base hev Environment without changing its stable ID or current Session bindings.',
+    parameters: {
+      environment: { type: 'string', required: true, description: 'Existing Environment ID or name.' },
+      name: { type: 'string', required: true, description: 'New lowercase kebab-case Environment name.' },
+    },
+    output: TEXT_OUTPUT,
+    execute: async (args, exec) => executeWithPrompt(ctx, async () => {
+      requireAgent(exec.agent)
+      return renderEnvironment((await ctx.environment.rename(args.environment, args.name, exec.signal)).environment)
+    }),
+  }))
+
+  ctx.tools.register(defineTool({
+    name: 'hev_env_delete',
+    description: 'Delete one non-base hev Environment. Sessions still bound to it resolve to base on their next hev operation.',
+    parameters: {
+      environment: { type: 'string', required: true, description: 'Existing non-base Environment ID or name.' },
+    },
+    output: TEXT_OUTPUT,
+    execute: async (args, exec) => executeWithPrompt(ctx, async () => {
+      requireAgent(exec.agent)
+      const result = await ctx.environment.deleteEnvironment(args.environment, exec.signal)
+      return `deleted ${result.environment.name} (${result.environment.id})`
+    }),
+  }))
+
+  ctx.tools.register(defineTool({
     name: 'hev_env_list',
     description: 'List Environments stored for DSH. Use the returned ID or name with hev_env_use; this does not report the current Session selection.',
     parameters: {},
@@ -93,7 +121,7 @@ export function apply(ctx: Context): void {
       policy: {
         type: 'string',
         enum: ['auto', 'off'],
-        description: 'auto exposes the Skill to the model; off records the binding but keeps it hidden. Defaults to auto.',
+        description: 'auto includes the Skill in automatic model discovery; off excludes it from that catalog. Defaults to auto.',
       },
     },
     output: TEXT_OUTPUT,
@@ -111,20 +139,51 @@ export function apply(ctx: Context): void {
 
   ctx.tools.register(defineTool({
     name: 'hev_skill_list',
-    description: "List all bindings in the current Session's Environment, including off entries. Set global=true to list native DSH-discoverable Skills before hev filtering.",
+    description: "List all bindings in one named or current Session Environment, including off entries. Set global=true to list native DSH-discoverable Skills before hev filtering.",
     parameters: {
       global: { type: 'boolean', description: 'List the unfiltered native DSH Skill catalog.' },
+      environment: { type: 'string', description: 'Inspect this Environment ID or name without selecting it.' },
     },
     output: TEXT_OUTPUT,
     execute: async (args, exec) => executeWithPrompt(ctx, async () => {
       const agent = requireAgent(exec.agent)
+      if (args.global === true && args.environment !== undefined) {
+        throw new HevCliError(
+          StatusCode.InvalidArgument,
+          'global and environment cannot be used together',
+          'Set either global=true or environment, not both.',
+        )
+      }
       if (args.global === true) {
         const skills = await ctx.environment.listGlobalSkills(agent, exec.signal)
         return skills.length === 0
           ? 'global: no skills available'
           : ['global:', ...skills.map(skill => `- ${skill.name}`)].join('\n')
       }
+      if (args.environment !== undefined) {
+        return renderEnvironmentSkills(await ctx.environment.listEnvironmentSkills(args.environment, exec.signal))
+      }
       return renderEnvironmentSkills(await ctx.environment.current(agent.session, exec.signal))
+    }),
+  }))
+
+  ctx.tools.register(defineTool({
+    name: 'hev_skill_remove',
+    description: 'Remove one existing Skill binding from one or more Environments atomically.',
+    parameters: {
+      skill: { type: 'string', required: true, description: 'Bound Skill key to remove.' },
+      environments: {
+        type: 'array',
+        required: true,
+        description: 'One or more existing Environment names, with no duplicates.',
+        items: { type: 'string' },
+      },
+    },
+    output: TEXT_OUTPUT,
+    execute: async (args, exec) => executeWithPrompt(ctx, async () => {
+      requireAgent(exec.agent)
+      const result = await ctx.environment.removeSkill(args.skill, args.environments, exec.signal)
+      return `removed ${result.skillKey} from ${result.environments.map(value => value.name).join(', ')}`
     }),
   }))
 }

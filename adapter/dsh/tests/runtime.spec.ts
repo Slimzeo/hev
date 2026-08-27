@@ -207,6 +207,22 @@ describe('@slimzeo/hev-dsh-plugin/hev-runtime', () => {
           stderr: '',
         }
       }
+      if (command[0] === 'env' && command[1] === 'rename') {
+        return {
+          stdout: success('environment renamed', {
+            environment: environment('env_created', 3, [], 'backend'),
+          }),
+          stderr: '',
+        }
+      }
+      if (command[0] === 'env' && command[1] === 'delete') {
+        return {
+          stdout: success('environment deleted', {
+            environment: environment('env_scratch', 1, [], 'scratch'),
+          }),
+          stderr: '',
+        }
+      }
       if (command[0] === 'skill' && command[1] === 'add') {
         return {
           stdout: success('skill added to environment', {
@@ -214,6 +230,24 @@ describe('@slimzeo/hev-dsh-plugin/hev-runtime', () => {
             environments: [
               { source: 'dsh', id: 'env_created', name: 'coding', revision: 2 },
               { source: 'dsh', id: 'env_writing', name: 'writing', revision: 4 },
+            ],
+          }),
+          stderr: '',
+        }
+      }
+      if (command[0] === 'skill' && command[1] === 'list' && command.length === 3) {
+        return {
+          stdout: success('environment skills listed', { environment: environment('env_created', 2) }),
+          stderr: '',
+        }
+      }
+      if (command[0] === 'skill' && command[1] === 'remove') {
+        return {
+          stdout: success('skill removed from environment', {
+            skillKey: 'code-review',
+            environments: [
+              { source: 'dsh', id: 'env_created', name: 'coding', revision: 3 },
+              { source: 'dsh', id: 'env_writing', name: 'writing', revision: 5 },
             ],
           }),
           stderr: '',
@@ -272,13 +306,19 @@ describe('@slimzeo/hev-dsh-plugin/hev-runtime', () => {
       .resolves.toMatchObject({
         result: { kind: 'success', text: 'usage: /hev env use <environment-id-or-name>' },
       })
+    await expect(ctx.commands.execute(owner, '/hev help env rename', [], signal))
+      .resolves.toMatchObject({ result: { kind: 'success', text: expect.stringContaining('env rename') } })
+    await expect(ctx.commands.execute(owner, '/hev help skill remove', [], signal))
+      .resolves.toMatchObject({ result: { kind: 'success', text: expect.stringContaining('skill remove') } })
     await expect(ctx.commands.execute(owner, '/hev skill --help', [], signal))
       .resolves.toMatchObject({ result: { kind: 'success', text: expect.stringContaining('/hev skill add') } })
     await expect(ctx.commands.execute(owner, '/hev skill list', [], signal))
       .resolves.toMatchObject({ result: { kind: 'success', text: 'hev not activated' } })
     await expect(ctx.commands.execute(owner, '/hev skill list --global', [], signal))
       .resolves.toMatchObject({ result: { kind: 'success', text: 'global:\n- code-review\n- hev-guide\n- outside-skill' } })
-    await expect(ctx.commands.execute(owner, '/hev skill list extra', [], signal))
+    await expect(ctx.commands.execute(owner, '/hev skill list coding', [], signal))
+      .resolves.toMatchObject({ result: { kind: 'success', text: expect.stringContaining('coding:') } })
+    await expect(ctx.commands.execute(owner, '/hev skill list coding extra', [], signal))
       .resolves.toMatchObject({ result: { kind: 'error', text: expect.stringContaining('skill list') } })
     await expect(ctx.commands.execute(owner, '/hev env list', [], signal))
       .resolves.toMatchObject({
@@ -289,6 +329,10 @@ describe('@slimzeo/hev-dsh-plugin/hev-runtime', () => {
       })
     await expect(ctx.commands.execute(owner, '/hev env create coding', [], signal))
       .resolves.toMatchObject({ result: { kind: 'success', text: 'environment created' } })
+    await expect(ctx.commands.execute(owner, '/hev env rename coding backend', [], signal))
+      .resolves.toMatchObject({ result: { kind: 'success', text: 'environment renamed' } })
+    await expect(ctx.commands.execute(owner, '/hev env delete scratch', [], signal))
+      .resolves.toMatchObject({ result: { kind: 'success', text: 'environment deleted' } })
     await expect(ctx.commands.execute(owner, '/hev skill add code-review --env coding', [], signal))
       .resolves.toMatchObject({ result: { kind: 'error', text: expect.stringContaining('skill add') } })
     await expect(ctx.commands.execute(
@@ -297,6 +341,12 @@ describe('@slimzeo/hev-dsh-plugin/hev-runtime', () => {
       [],
       signal,
     )).resolves.toMatchObject({ result: { kind: 'success', text: 'skill added to environment' } })
+    await expect(ctx.commands.execute(
+      owner,
+      '/hev skill remove code-review coding writing',
+      [],
+      signal,
+    )).resolves.toMatchObject({ result: { kind: 'success', text: 'skill removed from environment' } })
     await expect(ctx.commands.execute(owner, '/hev env use coding', [], signal))
       .resolves.toMatchObject({ result: { kind: 'success', text: 'coding (env_created rev 2)' } })
     await expect(ctx.commands.execute(owner, '/hev env status', [], signal))
@@ -321,9 +371,13 @@ describe('@slimzeo/hev-dsh-plugin/hev-runtime', () => {
     expect(runner.mock.calls.map(call => call[1])).toEqual([
       ['--source', 'dsh', 'env', 'status', '--session-id', 'commands', '--output', 'json'],
       ['--source', 'dsh', 'env', 'status', '--session-id', 'commands', '--output', 'json'],
+      ['--source', 'dsh', 'skill', 'list', 'coding', '--output', 'json'],
       ['--source', 'dsh', 'env', 'list', '--output', 'json'],
       ['--source', 'dsh', 'env', 'create', 'coding', '--output', 'json'],
+      ['--source', 'dsh', 'env', 'rename', 'coding', 'backend', '--output', 'json'],
+      ['--source', 'dsh', 'env', 'delete', 'scratch', '--output', 'json'],
       ['--source', 'dsh', 'skill', 'add', 'code-review', 'coding', 'writing', '--policy', 'off', '--output', 'json'],
+      ['--source', 'dsh', 'skill', 'remove', 'code-review', 'coding', 'writing', '--output', 'json'],
       ['--source', 'dsh', 'env', 'use', 'coding', '--session-id', 'commands', '--output', 'json'],
       ['--source', 'dsh', 'env', 'status', '--session-id', 'commands', '--output', 'json'],
       ['--source', 'dsh', 'env', 'quit', '--session-id', 'commands', '--output', 'json'],

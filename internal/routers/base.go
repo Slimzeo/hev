@@ -52,8 +52,10 @@ An Environment contains Skill bindings and policies. Session-aware commands
 select at most one Environment for one host Session.`,
 		Example: `  hev env list
   hev env create coding
+  hev env rename coding-tools backend-tools
   hev env use coding --session-id <session-id>
-  hev skill add code-review coding --policy auto`,
+  hev skill add code-review coding --policy auto
+  hev skill list coding`,
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		Args:          common.ExactArgs(0),
