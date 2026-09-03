@@ -88,7 +88,7 @@ function callTool(ctx: Context, name: string, args: unknown, caller?: Agent) {
   })
 }
 
-describe('@slimzeo/hev-dsh-plugin/hev-tool', () => {
+describe('@owariband/hev-dsh-plugin/hev-tool', () => {
   it('uses the exact calling Agent for Session-scoped operations', async () => {
     const { ctx, current, use, quit } = await setup()
     const caller = agent('caller-session')

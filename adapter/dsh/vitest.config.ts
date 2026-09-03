@@ -47,7 +47,7 @@ const dshSource = {
   name: 'dsh-source-resolver',
   enforce: 'pre' as const,
   resolveId(id: string): string | null {
-    const hevPrefix = '@slimzeo/hev-dsh-plugin/'
+    const hevPrefix = '@owariband/hev-dsh-plugin/'
     if (id.startsWith(hevPrefix)) return join(here, 'src', id.slice(hevPrefix.length), 'index.ts')
     if (!id.startsWith('@deepseek-ai/')) return null
     const parts = id.split('/')

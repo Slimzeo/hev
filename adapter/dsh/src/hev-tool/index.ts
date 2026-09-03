@@ -1,5 +1,5 @@
 /** Model-facing hev Environment Workspace tools for DeepSeek Harness.
- * @module @slimzeo/hev-dsh-plugin/hev-tool
+ * @module @owariband/hev-dsh-plugin/hev-tool
  */
 
 import type { Context } from '@deepseek-ai/cordis'

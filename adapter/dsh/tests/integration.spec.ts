@@ -17,9 +17,9 @@ import { Session, SessionId } from '@deepseek-ai/dsh-session'
 import SkillRegistry from '@deepseek-ai/dsh-skill'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
-import EnvironmentController from '@slimzeo/hev-dsh-plugin/hev-runtime'
-import HevSkillRegistry from '@slimzeo/hev-dsh-plugin/hev-skill-registry'
-import * as HevTool from '@slimzeo/hev-dsh-plugin/hev-tool'
+import EnvironmentController from '@owariband/hev-dsh-plugin/hev-runtime'
+import HevSkillRegistry from '@owariband/hev-dsh-plugin/hev-skill-registry'
+import * as HevTool from '@owariband/hev-dsh-plugin/hev-tool'
 
 const execFileAsync = promisify(execFile)
 const adapterRoot = fileURLToPath(new URL('..', import.meta.url))
@@ -104,9 +104,9 @@ describe('hev DSH bundle', () => {
       ['@deepseek-ai/dsh-system-prompt', SystemPrompt],
       ['@deepseek-ai/dsh-tools', ToolRuntime],
       ['@deepseek-ai/dsh-skill', SkillRegistry],
-      ['@slimzeo/hev-dsh-plugin/hev-runtime', EnvironmentController],
-      ['@slimzeo/hev-dsh-plugin/hev-skill-registry', HevSkillRegistry],
-      ['@slimzeo/hev-dsh-plugin/hev-tool', HevTool],
+      ['@owariband/hev-dsh-plugin/hev-runtime', EnvironmentController],
+      ['@owariband/hev-dsh-plugin/hev-skill-registry', HevSkillRegistry],
+      ['@owariband/hev-dsh-plugin/hev-tool', HevTool],
     ])
     ctx.loader.internal = {
       version: 'v2',

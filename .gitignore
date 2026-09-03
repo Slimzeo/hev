@@ -1,5 +1,14 @@
-# @byted-motor/aicoding-telemetry: git-hook run log (do not commit)
-.motor-code/log/
+# Local tooling and operating-system metadata
+.motor-code/
+.DS_Store
+
+# Local credentials and environment overrides
+.env
+.env.*
+!.env.example
+.npmrc
+*.pem
+*.key
 
 # Local JavaScript dependencies and development symlinks
 node_modules
@@ -8,3 +17,4 @@ lib/
 adapter/dsh/bin/
 adapter/dsh/*.tgz
 *.tsbuildinfo
+coverage/

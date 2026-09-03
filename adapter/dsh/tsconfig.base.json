@@ -46,9 +46,9 @@
       "@deepseek-ai/dsh-tools/*": ["../../../deepseek-harness/packages/core/tools/src/*"],
       "@deepseek-ai/dsh-typert-protocol": ["../../../deepseek-harness/packages/typert/protocol/src"],
       "@deepseek-ai/dsh-typert-protocol/*": ["../../../deepseek-harness/packages/typert/protocol/src/*"],
-      "@slimzeo/hev-dsh-plugin/hev-runtime": ["./src/hev-runtime/index.ts"],
-      "@slimzeo/hev-dsh-plugin/hev-skill-registry": ["./src/hev-skill-registry/index.ts"],
-      "@slimzeo/hev-dsh-plugin/hev-tool": ["./src/hev-tool/index.ts"]
+      "@owariband/hev-dsh-plugin/hev-runtime": ["./src/hev-runtime/index.ts"],
+      "@owariband/hev-dsh-plugin/hev-skill-registry": ["./src/hev-skill-registry/index.ts"],
+      "@owariband/hev-dsh-plugin/hev-tool": ["./src/hev-tool/index.ts"]
     }
   }
 }

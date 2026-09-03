@@ -1,5 +1,5 @@
 /** hev-filtered implementation of the native DSH Skill Registry.
- * @module @slimzeo/hev-dsh-plugin/hev-skill-registry
+ * @module @owariband/hev-dsh-plugin/hev-skill-registry
  */
 
 import type { Context } from '@deepseek-ai/cordis'

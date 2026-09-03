@@ -1,5 +1,5 @@
 /** Live, session-scoped hev Environment selection for DeepSeek Harness.
- * @module @slimzeo/hev-dsh-plugin/hev-runtime
+ * @module @owariband/hev-dsh-plugin/hev-runtime
  */
 
 import { Context, Service } from '@deepseek-ai/cordis'

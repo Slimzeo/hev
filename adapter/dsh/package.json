@@ -1,10 +1,11 @@
 {
-  "name": "@slimzeo/hev-dsh-plugin",
-  "description": "hev Environment Workspace management and Skill filtering for DeepSeek Harness",
+  "name": "@owariband/hev-dsh-plugin",
+  "description": "Session-scoped Skill Environments and automatic catalog filtering for DeepSeek Harness",
   "version": "0.1.0",
   "private": false,
   "publishConfig": {
     "access": "public",
+    "registry": "https://registry.npmjs.org/",
     "executableFiles": [
       "bin/darwin-arm64/hev",
       "bin/darwin-x64/hev",
@@ -15,8 +16,12 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Slimzeo/skill-env.git",
+    "url": "git+https://github.com/Slimzeo/hev.git",
     "directory": "adapter/dsh"
+  },
+  "homepage": "https://github.com/Slimzeo/hev#readme",
+  "bugs": {
+    "url": "https://github.com/Slimzeo/hev/issues"
   },
   "type": "module",
   "exports": {
@@ -41,8 +46,10 @@
   },
   "scripts": {
     "build": "pnpm run build:typescript && pnpm run build:binaries",
-    "build:typescript": "tsc -p tsconfig.json --pretty false && tsdown lib/types/hev-runtime/index.js lib/types/hev-skill-registry/index.js lib/types/hev-tool/index.js --root lib/types --out-dir lib --format esm --platform node --target es2024 --no-clean --no-fixed-extension",
+    "build:typescript": "node scripts/clean-lib.mjs && tsc -p tsconfig.json --pretty false && tsdown lib/types/hev-runtime/index.js lib/types/hev-skill-registry/index.js lib/types/hev-tool/index.js --root lib/types --out-dir lib --format esm --platform node --target es2024 --no-clean --no-fixed-extension",
     "build:binaries": "node scripts/build-binaries.mjs",
+    "test:package": "node scripts/verify-package.mjs",
+    "release:check": "pnpm test && pnpm run build && pnpm run test:package",
     "typecheck": "tsc -p tsconfig.json --pretty false",
     "test": "vitest run --config vitest.config.ts --configLoader native",
     "prepack": "pnpm run build"
@@ -51,6 +58,7 @@
     "bin/**/hev",
     "bin/**/hev.exe",
     "cordis.patch.yml",
+    "lib/*.js",
     "lib/hev-runtime/index.js",
     "lib/hev-skill-registry/index.js",
     "lib/hev-tool/index.js",

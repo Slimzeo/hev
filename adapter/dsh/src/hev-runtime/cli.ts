@@ -1,5 +1,5 @@
 /** Strict hev CLI v2 decoding over an injected native command runner.
- * @module @slimzeo/hev-dsh-plugin/hev-runtime/cli
+ * @module @owariband/hev-dsh-plugin/hev-runtime/cli
  */
 
 import { runNativeCommand } from '@deepseek-ai/dsh-native-command'

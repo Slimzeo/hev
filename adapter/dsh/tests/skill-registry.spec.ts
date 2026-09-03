@@ -63,7 +63,7 @@ async function world(
   return { ctx, current: currentSpy }
 }
 
-describe('@slimzeo/hev-dsh-plugin/hev-skill-registry', () => {
+describe('@owariband/hev-dsh-plugin/hev-skill-registry', () => {
   it('filters active catalogs while preserving direct lookup for explicit user invocation', async () => {
     const active = sessionAgent('active')
     const inactive = sessionAgent('inactive')

@@ -1,5 +1,5 @@
 /** Public Environment data returned by hev CLI response schema v2.
- * @module @slimzeo/hev-dsh-plugin/hev-runtime/environment
+ * @module @owariband/hev-dsh-plugin/hev-runtime/environment
  */
 
 import type { Branded } from '@deepseek-ai/dsh-brand'

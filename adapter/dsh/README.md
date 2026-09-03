@@ -1,10 +1,12 @@
 # hev DSH plugin
 
-`@slimzeo/hev-dsh-plugin` is the single installable hev bundle for DeepSeek Harness. It exposes three Cordis entries from one npm package:
+> **Status:** alpha. `@owariband/hev-dsh-plugin` has not been published to npm yet. The npm command below describes the planned first release; use the source-development setup for now.
 
-- `@slimzeo/hev-dsh-plugin/hev-runtime` owns `/hev` and delegates Session selection to the Go Core.
-- `@slimzeo/hev-dsh-plugin/hev-skill-registry` replaces the native `ctx.skills` implementation and filters native Skill winners by the selected Environment.
-- `@slimzeo/hev-dsh-plugin/hev-tool` exposes Environment Workspace management directly to the current Agent.
+`@owariband/hev-dsh-plugin` is the single installable hev bundle for DeepSeek Harness. It exposes three Cordis entries from one npm package:
+
+- `@owariband/hev-dsh-plugin/hev-runtime` owns `/hev` and delegates Session selection to the Go Core.
+- `@owariband/hev-dsh-plugin/hev-skill-registry` replaces the native `ctx.skills` implementation and filters native Skill winners by the selected Environment.
+- `@owariband/hev-dsh-plugin/hev-tool` exposes Environment Workspace management directly to the current Agent.
 
 The package also includes the `hev` executable for supported macOS, Linux, and Windows targets. Users do not install Go or configure an executable path.
 
@@ -25,10 +27,10 @@ tests/integration.spec.ts         Loader composition with the real Go CLI
 
 The top-level source folders follow Cordis plugin ownership. Runtime helpers remain inside `hev-runtime`; `hev-skill-registry` replaces the native Skill service; `hev-tool` is the model-facing consumer.
 
-## Quick start
+## Planned npm quick start
 
 ```bash
-npx @deepseek-ai/dsh plugin --profile web add @slimzeo/hev-dsh-plugin@latest
+npx @deepseek-ai/dsh plugin --profile web add @owariband/hev-dsh-plugin@latest
 npx @deepseek-ai/dsh web
 ```
 
@@ -67,9 +69,10 @@ pnpm install
 pnpm typecheck
 pnpm test
 pnpm build
+pnpm run test:package
 ```
 
-`pnpm build` compiles the Cordis subpaths and supported hev binaries into the package. The integration test builds a temporary native hev executable, boots the composed rows through the DSH Loader, and verifies inactive passthrough, Environment and Skill mutations, filtered native Skill discovery, two-level `quit`, and exact-Session isolation.
+`pnpm build` compiles the Cordis subpaths and supported hev binaries into the package. `pnpm run test:package` packs and extracts the publishable artifact, imports all three plugin entries, and invokes the package-local binary without an executable override. Use `pnpm run release:check` to run the tests, build, and packed-artifact check together. The integration test builds a temporary native hev executable, boots the composed rows through the DSH Loader, and verifies inactive passthrough, Environment and Skill mutations, filtered native Skill discovery, two-level `quit`, and exact-Session isolation.
 
 ## Local DSH integration
 

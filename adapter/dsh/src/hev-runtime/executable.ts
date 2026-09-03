@@ -1,5 +1,5 @@
 /** Package-local hev executable resolution.
- * @module @slimzeo/hev-dsh-plugin/hev-runtime/executable
+ * @module @owariband/hev-dsh-plugin/hev-runtime/executable
  */
 
 import { fileURLToPath } from 'node:url'
@@ -21,5 +21,6 @@ export function bundledExecutable(): string {
     throw new Error(`hev does not provide a binary for ${target}`)
   }
   const filename = process.platform === 'win32' ? 'hev.exe' : 'hev'
-  return fileURLToPath(new URL(`../../bin/${target}/${filename}`, import.meta.url))
+  const packageJson = import.meta.resolve('@owariband/hev-dsh-plugin/package.json')
+  return fileURLToPath(new URL(`./bin/${target}/${filename}`, packageJson))
 }

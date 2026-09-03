@@ -62,7 +62,7 @@ async function world(runner: NativeCommandRunner) {
   return { ctx, runtime }
 }
 
-describe('@slimzeo/hev-dsh-plugin/hev-runtime', () => {
+describe('@owariband/hev-dsh-plugin/hev-runtime', () => {
   it('uses the package-local platform binary by default', async () => {
     const runner = vi.fn<NativeCommandRunner>(async () => ({
       stdout: sessionResponse('bundled-binary', environment('base', 1, [], 'base'), 'environment selected'),
